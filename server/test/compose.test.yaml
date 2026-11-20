@@ -1,0 +1,55 @@
+# Test-only overrides for server/test/verify.sh. Used as a second -f file on top of compose.yaml,
+# with its own project name. Ports 7501-7505 stay inside the test range 7500-7519.
+services:
+  mail:
+    ports: !override
+      - 127.0.0.1:7501:8080
+      - 127.0.0.1:7502:25
+      - 127.0.0.1:7503:143
+    restart: "no"
+    environment:
+      KASTEN_DEV_DNS_FORWARD: outbox outbox-untrusted .
+    volumes:
+      - restic-repo:/backup
+
+  outbox:
+    ports: !override
+      - 127.0.0.1:7504:8025
+    restart: "no"
+
+  # A second catcher whose certificate comes from a CA that the mail container does not trust.
+  outbox-untrusted:
+    image: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
+    command:
+      - --smtp=0.0.0.0:587
+      - --smtp-tls-cert=/etc/outbox/outbox.crt
+      - --smtp-tls-key=/etc/outbox/outbox.key
+      - --smtp-require-starttls
+      - --smtp-auth-file=/etc/outbox/smtp-auth
+      - --smtp-disable-rdns
+      - --listen=0.0.0.0:8025
+      - --disable-version-check
+    volumes:
+      - ${KASTEN_TEST_DIR:?}/untrusted:/etc/outbox:ro
+    ports:
+      - 127.0.0.1:7505:8025
+    restart: "no"
+
+# compose.yaml fixes the dev stack's subnets (10.74.80.0/24, 10.74.81.0/28). Docker refuses an
+# overlapping network, so this project gets its own and can run while the dev stack runs.
+networks:
+  default:
+    ipam: !override
+      config:
+        - subnet: 10.75.80.0/24
+          gateway: 10.75.80.1
+  admin:
+    ipam: !override
+      config:
+        - subnet: 10.75.81.0/28
+          gateway: 10.75.81.1
+
+volumes:
+  restic-repo:
+    external: true
+    name: kasten-infra-server-restic

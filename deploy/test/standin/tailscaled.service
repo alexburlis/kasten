@@ -1,0 +1,14 @@
+# Test stand-in for Tailscale's tailscaled.service, with the same [Unit] ordering. It names the
+# interface on the test tailnet (100.100.75.0/24) tailscale0, as Tailscale would.
+[Unit]
+Description=Test stand-in for tailscaled
+Wants=network-pre.target
+After=network-pre.target NetworkManager.service systemd-resolved.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/kasten-deploytest/tailnet
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,988 @@
+/* The conversation list and search results (web/DESIGN.md, List and Search). Rows are transparent
+   on the desk; each state has its own channel: unread a dot, weight and an accent date; hover the
+   ink underline and quick actions; the keyboard cursor one gliding bar; selected the warm wash and
+   a checked box; open the sheet's fill. */
+
+/* --- the pane ------------------------------------------------------------------------------- */
+
+/* The pane scrolls; the head stays. shell.css owns its display while a thread is open. */
+.list-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 72px;
+  container: list / inline-size;
+}
+
+/* The seam to the reading sheet; the open row covers it, so it reads as the sheet's tab. */
+.shell.reading .list-pane,
+.shell.reading .pane-head {
+  box-shadow: inset -1px 0 0 var(--rule);
+}
+
+/* The empty state fills the pane under its head and sits a little above the middle (the pane
+   already keeps 72 px clear at the bottom for the compose button). shell.css makes the pane a
+   column for it. */
+.list-pane > .empty {
+  flex: 1 0 auto;
+  align-content: center;
+  padding: 24px 24px 10vh;
+}
+
+/* The title row is centred in the 60 px head (the reference's spacing), so the title, the
+   select-all box and the bulk toolbar share one centre line. */
+.pane-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  height: 60px;
+  padding: 8px 20px 0 var(--gutter);
+  background: var(--bg);
+}
+
+/* Rows scrolling under the head dissolve into it instead of being cut mid-line. The band
+   appears once the list has scrolled, where scroll-driven animations exist; elsewhere it is
+   always there, which at the top only covers the day separator's padding. */
+.pane-head::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 12px;
+  background: linear-gradient(var(--bg), color-mix(in srgb, var(--bg) 0%, transparent));
+  pointer-events: none;
+}
+
+.shell.reading .pane-head::after {
+  right: 1px;
+}
+
+@supports (animation-timeline: scroll()) {
+  .pane-head::after {
+    animation: pane-edge linear both;
+    animation-timeline: scroll();
+    animation-range: 0 16px;
+  }
+}
+
+@keyframes pane-edge {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* The title and the unread count, on one baseline. */
+.pane-heading {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  min-width: 0;
+}
+
+/* In the gutter, so the title lines up with the senders below. */
+.select-all {
+  position: absolute;
+  top: 8px;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: var(--gutter);
+  opacity: 0;
+  transition: opacity var(--t-tap) linear;
+}
+
+.pane-head:hover .select-all,
+.pane-head.selecting .select-all,
+.select-all:focus-within {
+  opacity: 1;
+}
+
+.pane-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 10px;
+  overflow: hidden;
+  font: 400 24px/1.25 var(--serif);
+  letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-sub {
+  flex: none;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pane-sub b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The sync words are for phones, where the sidebar foot is in the drawer. */
+.pane-sync {
+  display: none;
+}
+
+.pane-head.selecting .pane-sub {
+  display: none;
+}
+
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.bulk-count {
+  flex: none;
+  margin-right: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bulk-count,
+.bulk .actions {
+  transition: opacity var(--t-hover) var(--ease-out);
+}
+
+@starting-style {
+  .bulk-count,
+  .bulk .actions {
+    opacity: 0;
+  }
+}
+
+.coverage,
+.pane-note {
+  padding: 0 20px 10px var(--gutter);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- rows ----------------------------------------------------------------------------------- */
+
+.rows-wrap {
+  position: relative;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--day-h);
+  padding: 6px 20px 0 var(--gutter);
+}
+
+.day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.row-item {
+  position: relative;
+  height: var(--row-h);
+  overflow: hidden;
+}
+
+.row-item.closing {
+  transition: transform var(--t-close) var(--ease-out);
+}
+
+/* The hairline under the row. The open row's fill replaces it, and a separator draws its own. */
+.row-item::after {
+  content: "";
+  position: absolute;
+  right: 20px;
+  bottom: 0;
+  left: var(--gutter);
+  height: 1px;
+  background: var(--rule);
+  opacity: 0.75;
+}
+
+.row-item.open::after,
+.row-item:last-child::after,
+.row-item:has(+ .day, + .row-more)::after {
+  display: none;
+}
+
+.row-content {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, 1fr);
+  grid-auto-columns: auto;
+  grid-auto-flow: column;
+  height: 100%;
+  touch-action: pan-y;
+  transition: transform var(--t-close) var(--ease-out);
+}
+
+/* Hover: the hairline redraws in ink from the left. */
+.row-content::after {
+  content: "";
+  position: absolute;
+  right: 20px;
+  bottom: 0;
+  left: var(--gutter);
+  height: 1px;
+  background: var(--text);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--t-hover) var(--ease-out);
+}
+
+/* Unread: the accent dot on the first line. */
+.row-item.unread .row-content::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: calc((var(--gutter) - 7px) / 2);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  transition:
+    opacity var(--t-tap) linear,
+    transform var(--t-tap) var(--ease-out);
+}
+
+/* In selection mode the checkbox takes the first line and the dot moves beside it, to the
+   subject line, so unread still shows. */
+.row-item.unread.selecting .row-content::before {
+  transform: translateY(21px);
+}
+
+.row-check {
+  display: grid;
+  grid-row: 1;
+  grid-column: 1;
+  place-items: start center;
+  padding-top: 7px;
+  opacity: 0;
+  transition:
+    opacity var(--t-tap) linear,
+    transform var(--t-tap) var(--ease-out);
+}
+
+.row-item.selecting .row-check,
+.row-check:focus-within {
+  opacity: 1;
+}
+
+.row-button {
+  display: grid;
+  grid-template-rows: 18px 20px;
+  grid-row: 1;
+  grid-column: 2;
+  row-gap: 2px;
+  align-content: center;
+  min-width: 0;
+  padding: 0 20px 0 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: default;
+}
+
+/* Rows clip their content for swipes, so focus rings sit inside. */
+.row-item :focus-visible {
+  outline-offset: -2px;
+}
+
+.row-line {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* The sender and the thread count; the count never truncates with the name. */
+.row-who {
+  display: contents;
+}
+
+.sender {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-count {
+  flex: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-clip {
+  display: inline-grid;
+  flex: none;
+  align-self: center;
+  color: var(--text-2);
+}
+
+.row-clip .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* The compact "Not encrypted" badge gives way to its icon before it would leave the row; the
+   full text is in the title and for screen readers. */
+.row-badge {
+  flex: 0 4 auto;
+  align-self: center;
+  min-width: 26px;
+  height: 18px;
+  overflow: hidden;
+  padding: 0 6px;
+}
+
+.row-badge-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Wide enough for the quick actions that replace it on hover. */
+.row-line time {
+  flex: none;
+  min-width: 64px;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  transition: opacity var(--t-tap) linear;
+}
+
+.subject-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  padding-right: 28px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subject {
+  color: var(--text);
+  font: 400 15px/20px var(--serif);
+  letter-spacing: -0.003em;
+}
+
+.snippet {
+  color: var(--text-2);
+  font-size: 13.5px;
+  transition: opacity var(--t-hover) linear;
+}
+
+/* The dash is decoration: the alt text after the slash keeps it out of the row's name. */
+.snippet::before {
+  content: "\2002\2014\2002";
+  content: "\2002\2014\2002" / "";
+  color: var(--rule-strong);
+}
+
+/* Reserved until the message decrypts, so the row never changes height. */
+.snippet.pending {
+  opacity: 0;
+}
+
+.row-item.unread .sender {
+  font-weight: 600;
+}
+
+/* Serif weights are 400 and 700 only (Charter in Chrome has nothing between). */
+.row-item.unread .subject,
+.rows .subject mark {
+  font-weight: 700;
+}
+
+.row-item.unread .row-line time {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.row-star {
+  position: absolute;
+  top: 25px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-2);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--t-tap) linear;
+}
+
+.row-star .icon {
+  width: 15px;
+  height: 15px;
+}
+
+@media (hover: hover) {
+  .row-star:hover {
+    color: var(--text);
+  }
+}
+
+.row-star.on {
+  color: var(--text);
+  opacity: 1;
+}
+
+.row-star:focus-visible {
+  opacity: 1;
+}
+
+.row-quick {
+  position: absolute;
+  top: 3px;
+  right: 14px;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition:
+    opacity var(--t-hover) var(--ease-out),
+    transform var(--t-hover) var(--ease-out);
+}
+
+.row-quick .icon-button {
+  width: 26px;
+  height: 24px;
+}
+
+.row-quick .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Pointer hover only, so a tap never leaves a row stuck in its hover state. */
+@media (hover: hover) {
+  .row-item:hover .row-content::after {
+    transform: scaleX(1);
+  }
+
+  .row-item:hover .row-check,
+  .row-item:hover .row-star {
+    opacity: 1;
+  }
+
+  .row-item.unread:not(.selecting):hover .row-content::before {
+    opacity: 0;
+  }
+
+  .row-item:hover .row-quick {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .row-item:has(.row-quick):hover .row-line time {
+    opacity: 0;
+  }
+}
+
+/* Selected beats open: both show the wash. */
+.row-item.open .row-content {
+  background: var(--surface);
+}
+
+.row-item.selected .row-content {
+  background: var(--selected);
+}
+
+.row-item.pending {
+  display: flex;
+  align-items: center;
+  padding: 0 20px 0 var(--gutter);
+  color: var(--text-2);
+}
+
+.row-more {
+  display: flex;
+  justify-content: center;
+  padding: 14px 20px;
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* --- the keyboard cursor: one bar that glides between rows -------------------------------- */
+
+/* --cursor-y and --cursor-t come from useListMotion. */
+.list-cursor {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  z-index: 2;
+  width: 3px;
+  height: calc(var(--row-h) - 16px);
+  border-radius: 2px;
+  background: var(--text);
+  pointer-events: none;
+  transform: translateY(calc(var(--cursor-y, -100px) + 8px));
+  transition: transform var(--cursor-t, 0ms) var(--ease-out);
+}
+
+/* --- swipes (touch) ------------------------------------------------------------------------ */
+
+/* The underlay shows the action; the row is opaque while it follows the finger. */
+.row-item.swiping {
+  background: var(--accent-weak);
+}
+
+.row-item.swiping .row-content {
+  background: var(--bg);
+  transition: none;
+}
+
+.row-item.swiping.open .row-content {
+  background: var(--surface);
+}
+
+.row-item.swiping.selected .row-content {
+  background: var(--selected);
+}
+
+.swipe-hint {
+  position: absolute;
+  top: 50%;
+  display: none;
+  color: var(--text-2);
+  transform: translateY(-50%);
+}
+
+.row-item.swiping .swipe-hint {
+  display: grid;
+}
+
+/* Shown under the row as it moves: archive on a left swipe, read on a right swipe. */
+.swipe-hint.left {
+  right: 24px;
+}
+
+.swipe-hint.right {
+  left: 24px;
+}
+
+.row-item.swipe-archive .swipe-hint.left,
+.row-item.swipe-read .swipe-hint.right {
+  color: var(--accent);
+}
+
+/* --- one line: a wide list with no thread open ------------------------------------------- */
+
+/* A thread open makes the list at most 520 px wide (or hides it), so this width alone means
+   nothing is open. Rows become ledger lines: sender | subject — snippet | badges, clip, star,
+   date. The gutter holds the cursor bar, the unread dot and the checkbox side by side:
+   cursor 3–6 px, dot 11–18 px in selection mode, checkbox 24–40 px, then 8 px to the sender. */
+@container list (min-width: 880px) {
+  .list-pane > * {
+    --gutter: 48px;
+    --row-h: 44px;
+  }
+
+  .pane-head,
+  .coverage,
+  .pane-note,
+  .day,
+  .row-item.pending {
+    padding-right: 32px;
+  }
+
+  .row-item::after,
+  .row-content::after {
+    right: 32px;
+  }
+
+  /* The dates end on the hairline's right end, as in two-line rows; the star has its own slot
+     before them. */
+  .row-button {
+    grid-template-columns:
+      [who] 220px [subject] minmax(0, 1fr) [badge] auto [clip] auto [star] 30px
+      [date] auto;
+    grid-template-rows: 20px;
+    padding-right: 32px;
+  }
+
+  .row-line {
+    display: contents;
+  }
+
+  .row-who,
+  .row-line > .sender {
+    grid-row: 1;
+    grid-column: who;
+    min-width: 0;
+    padding-right: 16px;
+    line-height: 20px;
+  }
+
+  .row-who {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .row-line > .sender {
+    display: block;
+  }
+
+  .subject-line {
+    grid-row: 1;
+    grid-column: subject;
+    padding-right: 0;
+  }
+
+  .row-badge {
+    grid-row: 1;
+    grid-column: badge;
+    margin-left: 12px;
+  }
+
+  .row-clip {
+    grid-row: 1;
+    grid-column: clip;
+    margin-left: 10px;
+  }
+
+  /* A fixed width, so the star's slot and the quick actions that replace the date line up. */
+  .row-line time {
+    grid-row: 1;
+    grid-column: date;
+    align-self: baseline;
+    width: 84px;
+    min-width: 0;
+    margin-left: 0;
+    line-height: 20px;
+  }
+
+  .row-item.unread .row-content::before {
+    top: 18.5px;
+  }
+
+  /* In selection mode the dot moves left of the checkbox, 6 px clear of it. */
+  .row-item.unread.selecting .row-content::before {
+    transform: translateX(-9.5px);
+  }
+
+  /* The checkboxes keep one lane at the gutter's right, so they never move under the pointer. */
+  .row-check,
+  .select-all {
+    justify-items: end;
+    padding-right: 8px;
+  }
+
+  .row-check {
+    align-items: center;
+    padding-top: 0;
+  }
+
+  /* In the star slot, right of the badges and the clip, 3 px clear of the date. */
+  .row-star {
+    top: 11px;
+    right: calc(32px + 84px + 3px);
+  }
+
+  .row-quick {
+    top: 10px;
+    right: 32px;
+  }
+
+  .list-cursor {
+    left: 3px;
+  }
+}
+
+/* --- narrow lists: the head keeps one row while selecting ------------------------------- */
+
+/* "2 selected", labelled Archive and Delete and five icons need about 490 px, so the title
+   gives way first and the labels only on lists narrower than the 400–520 px desktop list. */
+@container list (max-width: 599px) {
+  .pane-head.selecting .pane-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+@container list (max-width: 489px) {
+  .bulk .action-label {
+    display: none;
+  }
+}
+
+/* --- touch: no hover, so checkboxes wait for selection mode and quick actions are swipes -- */
+
+@media (hover: none) {
+  .row-check,
+  .pane-head .select-all {
+    visibility: hidden;
+  }
+
+  .row-item.selecting .row-check,
+  .pane-head.selecting .select-all {
+    visibility: visible;
+  }
+
+  .row-quick {
+    display: none;
+  }
+
+  /* An unstarred star would be an invisible tap target. */
+  .row-star:not(.on) {
+    visibility: hidden;
+  }
+}
+
+/* --- the list returns (720–1199 px): a fade, no movement ---------------------------------- */
+
+@media (max-width: 1199px) {
+  .list-pane {
+    transition: opacity var(--t-hover) linear;
+  }
+
+  @starting-style {
+    .list-pane {
+      opacity: 0;
+    }
+  }
+}
+
+/* --- phones: three-line rows ------------------------------------------------------------- */
+
+@media (max-width: 719px) {
+  .list-pane {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  /* Selection mode widens the gutter for the checkbox beside the dot. */
+  .list-pane:has(> .pane-head.selecting) {
+    --gutter: 48px;
+  }
+
+  .pane-head {
+    align-items: baseline;
+    height: 56px;
+    padding: 4px 16px 0 var(--gutter);
+  }
+
+  /* Checkboxes wait for selection mode (a long press), and line up at the gutter's right. */
+  .select-all {
+    top: 4px;
+    justify-items: end;
+    padding-right: 8px;
+  }
+
+  .row-check,
+  .select-all {
+    visibility: hidden;
+  }
+
+  .row-item.selecting .row-check,
+  .pane-head.selecting .select-all {
+    visibility: visible;
+  }
+
+  .row-item.unread:not(.selecting):hover .row-content::before {
+    opacity: 1;
+  }
+
+  .row-quick {
+    display: none;
+  }
+
+  .pane-head.selecting {
+    align-items: center;
+  }
+
+  .pane-title {
+    font-size: 31px;
+  }
+
+  .pane-sync {
+    display: inline;
+  }
+
+  /* While selecting, the head keeps the select-all box and the count; the actions move to a
+     bar pinned to the bottom, within thumb reach, like the phone thread's dock: 44 px targets
+     on a blurred sheet above the safe area. The Compose pill gives way to it (shell.css). */
+  .pane-head.selecting .bulk {
+    margin-left: 0;
+  }
+
+  .bulk-count {
+    font-size: 15px;
+  }
+
+  .bulk .action-label,
+  .bulk .actions-sep {
+    display: none;
+  }
+
+  .bulk .actions {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    justify-content: space-evenly;
+    gap: 0;
+    height: calc(64px + env(safe-area-inset-bottom));
+    padding: 0 calc(8px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
+      calc(8px + env(safe-area-inset-left));
+    border-top: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    backdrop-filter: blur(16px) saturate(1.2);
+  }
+
+  .bulk .actions > :is(button, label) {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .bulk .actions .icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .pane-head.selecting .pane-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .coverage,
+  .pane-note {
+    padding-right: 16px;
+  }
+
+  .day {
+    padding: 8px 16px 0 var(--gutter);
+  }
+
+  .row-item::after,
+  .row-content::after {
+    right: 16px;
+  }
+
+  .row-item.unread .row-content::before {
+    top: 14px;
+    left: 6px;
+    width: 8px;
+    height: 8px;
+  }
+
+  .row-item.unread.selecting .row-content::before {
+    transform: none;
+  }
+
+  .row-check {
+    justify-items: end;
+    padding: 10px 8px 0 0;
+  }
+
+  /* Sender and date, then the subject, then the snippet. */
+  .row-button {
+    grid-template-rows: 20px 21px 19px;
+    row-gap: 0;
+    padding-right: 16px;
+  }
+
+  .sender {
+    font-size: 15.5px;
+    line-height: 20px;
+  }
+
+  .row-line time {
+    font-size: 13.5px;
+  }
+
+  .subject-line {
+    display: contents;
+  }
+
+  .subject,
+  .snippet {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .subject {
+    padding-right: 22px;
+    font-size: 16.5px;
+    line-height: 21px;
+  }
+
+  .snippet {
+    font-size: 14.5px;
+    line-height: 19px;
+  }
+
+  .snippet::before {
+    content: none;
+  }
+
+  .row-star {
+    top: 28px;
+    right: 10px;
+  }
+
+  .row-item.pending {
+    padding-right: 16px;
+  }
+
+  .list-cursor {
+    display: none;
+  }
+}

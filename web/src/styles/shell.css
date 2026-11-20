@@ -1,0 +1,714 @@
+/* The window grid and everything around the panes (web/DESIGN.md, Shell and Layout).
+   At 1200 px and up the top bar sits at the top of the sidebar column; at 720–1199 px it spans
+   the window; on phones it holds the menu button and the search field, and the sidebar is a
+   drawer. */
+
+/* --- the grid ---------------------------------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "top main"
+    "side main";
+  height: 100vh;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+.main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main:focus {
+  outline: none;
+}
+
+.notices {
+  flex: none;
+}
+
+.notices:empty {
+  display: none;
+}
+
+.panes {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* The reading sheet. The wrapper outlives thread changes, so its entrance plays only when a
+   thread opens while none is open; @starting-style is progressive, and without it the sheet is
+   simply there. */
+.reader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  transition:
+    opacity var(--t-pane) var(--ease-paper),
+    transform var(--t-pane) var(--ease-paper);
+}
+
+@starting-style {
+  .reader {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+/* --- the top bar ------------------------------------------------------------------------------- */
+
+.topbar {
+  grid-area: top;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 14px 14px 16px;
+}
+
+.topbar > * {
+  min-width: 0;
+}
+
+.menu-button {
+  display: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 24px;
+  padding-left: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.brand .icon {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.4;
+}
+
+.brand span {
+  font: 400 19px/1 var(--serif);
+  letter-spacing: -0.01em;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin: 0;
+  padding: 0 8px 0 10px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 75%, var(--bg));
+  color: var(--text-2);
+}
+
+.search:focus-within {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+
+/* A keyboard focus gets the app's 2 px accent ring; the 1 px rule alone is too faint to find. */
+.search:has(input:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.search .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* The field draws its own ring on the form, so the input's primitive ring goes. */
+.search input,
+.search input:focus-visible {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+/* Escape clears the field; the engine's own clear button matches nothing in the icon set. */
+.search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
+/* --- the sidebar ------------------------------------------------------------------------------- */
+
+.sidebar {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 14px 0 16px;
+  background: var(--bg);
+}
+
+.compose-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 36px;
+  margin-bottom: 18px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--raised);
+  box-shadow: var(--shadow-lift);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--t-tap) var(--ease-out);
+}
+
+.compose-button:active {
+  transform: scale(0.985);
+}
+
+.compose-button .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.sidebar ul {
+  display: grid;
+  flex: none;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .folder:hover {
+    background: var(--hover);
+  }
+}
+
+.folder.active {
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Device counts (Drafts, Outbox) stay quiet; unread counts are ink. */
+.count {
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.count.unread {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.folder.active .count {
+  color: var(--accent);
+}
+
+.sidebar-label {
+  padding: 18px 10px 7px;
+}
+
+/* The foot is --sidebar-foot tall (the toast sits directly above it), plus the window margin
+   below. Settings 30 + 2 + the sync line 48 + 2 + the account menu 30 = 112. While the account
+   menu is open the foot rises above the toast layer, so a pending toast never hides the menu. */
+.sidebar-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  flex: none;
+  align-content: end;
+  gap: 2px;
+  box-sizing: content-box;
+  height: var(--sidebar-foot);
+  margin-top: auto;
+  padding: 0 0 14px;
+  background: var(--bg);
+}
+
+.sidebar-foot:has(.account-menu[open]) {
+  z-index: 70;
+}
+
+/* --- the sync line ----------------------------------------------------------------------------- */
+
+.sync-indicator {
+  display: grid;
+  grid-template-rows: 18px 2px;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+  padding: 9px 10px 8px;
+  border-top: 1px solid var(--rule);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.sync-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sync-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-2);
+  opacity: 0.7;
+}
+
+.sync-coverage {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Offline changes the dot's shape as well as its colour: a hollow ring. */
+.sync-indicator.offline {
+  color: var(--warn);
+}
+
+.sync-indicator.offline .sync-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 -0.5px;
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--warn);
+  opacity: 1;
+}
+
+.sync-meter {
+  display: block;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--rule);
+}
+
+.sync-meter.idle {
+  background: none;
+}
+
+.sync-meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--text-2);
+  transform-origin: left;
+  transition: transform var(--t-pane) linear;
+}
+
+.sync-meter.idle .sync-meter-fill {
+  visibility: hidden;
+}
+
+/* --- the account menu -------------------------------------------------------------------------- */
+
+.account-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.account-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.account-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (hover: hover) {
+  .account-menu summary:hover {
+    background: var(--hover);
+  }
+}
+
+.account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu summary .icon {
+  color: var(--text-2);
+  transition: transform var(--t-hover) var(--ease-out);
+}
+
+.account-menu[open] summary .icon {
+  transform: rotate(180deg);
+}
+
+/* The menu opens upward from the foot, as wide as the sidebar's content. */
+.account-menu .menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 0;
+}
+
+.menu-user {
+  margin-bottom: 4px;
+  padding: 6px 10px 8px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+  color: var(--text-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A list pane showing an empty state is a column, so the empty state can fill the space under
+   the head (list.css places it). This file owns the pane's display, so the rules below
+   that hide it while reading still win. */
+.list-pane:has(> .empty) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- phone-only parts, hidden elsewhere -------------------------------------------------------- */
+
+.scrim,
+.fab,
+.fab-fade {
+  display: none;
+}
+
+/* --- ≥ 1200 px: the list beside the reading sheet ---------------------------------------------- */
+
+@media (min-width: 1200px) {
+  .shell.reading .panes {
+    grid-template-columns: var(--list-w) minmax(0, 1fr);
+  }
+}
+
+/* --- below 1200 px: the top bar spans the window; the thread replaces the list ----------------- */
+
+@media (max-width: 1199px) {
+  .shell {
+    grid-template-rows: 52px minmax(0, 1fr);
+    grid-template-areas:
+      "top top"
+      "side main";
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .menu-button {
+    display: inline-grid;
+    color: var(--text);
+  }
+
+  .brand {
+    flex: none;
+    width: calc(var(--sidebar) - 64px);
+  }
+
+  .search {
+    flex: 1;
+    max-width: 560px;
+  }
+
+  .shell.reading .list-pane {
+    display: none;
+  }
+
+  @starting-style {
+    .reader {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+  }
+}
+
+/* The menu button collapses the sidebar only at 720–1199 px; phones use the drawer. */
+@media (min-width: 720px) and (max-width: 1199px) {
+  .shell.collapsed {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+
+  .shell.collapsed .sidebar {
+    display: none;
+  }
+}
+
+/* --- phones: one pane at a time; the sidebar is a drawer --------------------------------------- */
+
+@media (max-width: 719px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "top"
+      "main";
+  }
+
+  .topbar {
+    gap: 8px;
+    height: 52px;
+    padding: 0 16px 0 8px;
+  }
+
+  .menu-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .menu-button .icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .search {
+    height: 38px;
+    max-width: none;
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+
+  /* 16 px keeps iOS from zooming into the focused field. */
+  .search input,
+  .search input:focus-visible {
+    font-size: 16px;
+  }
+
+  /* While a thread is open the sheet takes the whole screen, safe area included. */
+  .shell.reading {
+    background: var(--surface);
+  }
+
+  .shell.reading .topbar {
+    display: none;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 50;
+    width: min(300px, 85vw);
+    padding: max(12px, env(safe-area-inset-top)) 14px 0 max(16px, env(safe-area-inset-left));
+    box-shadow: var(--shadow-sheet);
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition:
+      transform var(--t-sheet) var(--ease-paper),
+      visibility 0s linear var(--t-sheet);
+  }
+
+  .sidebar.open {
+    visibility: visible;
+    transform: none;
+    transition: transform var(--t-sheet) var(--ease-paper);
+  }
+
+  /* The drawer is its own layer here, so it rises above the toast while its account menu is open. */
+  .sidebar:has(.account-menu[open]) {
+    z-index: 70;
+  }
+
+  /* Touch sizes in the drawer: 44 px targets and type that sits with the 16 px rows. */
+  .compose-button {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .folder {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .count {
+    font-size: 13.5px;
+  }
+
+  .account-menu summary {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  .account-menu .menu button {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  /* The toast does not sit on the foot below 720 px, so the foot takes its content's height. */
+  .sidebar-foot {
+    height: auto;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: var(--backdrop);
+    transition: opacity var(--t-sheet) var(--ease-paper);
+  }
+
+  @starting-style {
+    .scrim {
+      opacity: 0;
+    }
+  }
+
+  .fab {
+    position: fixed;
+    right: calc(16px + env(safe-area-inset-right));
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 50px;
+    padding: 0 20px 0 17px;
+    border: 0;
+    border-radius: 25px;
+    background: var(--primary);
+    box-shadow:
+      var(--edge),
+      0 1px 2px rgb(0 0 0 / 0.15),
+      0 10px 24px -8px rgb(0 0 0 / 0.35);
+    color: var(--on-primary);
+    font: 600 16px/1 var(--sans);
+    cursor: pointer;
+    transition:
+      opacity var(--t-hover) var(--ease-out),
+      transform var(--t-tap) var(--ease-out);
+  }
+
+  .fab:active {
+    transform: scale(0.98);
+  }
+
+  .fab .icon {
+    width: 19px;
+    height: 19px;
+  }
+
+  /* Rows fade into the desk under the pill, so none shows through behind its edges. The fade
+     takes no taps. */
+  .fab-fade {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 10;
+    display: block;
+    height: calc(132px + env(safe-area-inset-bottom));
+    background: linear-gradient(color-mix(in srgb, var(--bg) 0%, transparent), var(--bg) 55%);
+    pointer-events: none;
+    transition: opacity var(--t-hover) linear;
+  }
+
+  /* Selection mode pins the bulk actions to the bottom (list.css); the pill gives way to them. */
+  .shell:has(.pane-head.selecting) :is(.fab, .fab-fade) {
+    display: none;
+  }
+
+  /* The pill and its fade come back when a thread or compose closes. */
+  @starting-style {
+    .fab,
+    .fab-fade {
+      opacity: 0;
+    }
+  }
+}
+
+/* Shortcuts need a keyboard; a touch-only device does not offer their list. */
+@media (hover: none) and (pointer: coarse) {
+  .account-menu .menu-shortcuts {
+    display: none;
+  }
+}
+
+/* --- reduced motion: nothing moves; the sheet keeps a short fade -------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .reader {
+    transition: opacity var(--t-hover) linear !important;
+  }
+
+  @starting-style {
+    .reader {
+      transform: none;
+    }
+  }
+}

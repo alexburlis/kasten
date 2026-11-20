@@ -1,0 +1,86 @@
+<!doctype html>
+<!--
+  Kasten's sign-in page. Stalwart serves it from the mail server as the x:Application
+  "Kasten sign-in page" under /signin/ (server/signin/README.md). The web app sends the browser
+  here instead of to Stalwart's built-in /login page. Stalwart rewrites the base element below to
+  /signin/; build.sh gives the script and the stylesheet content-hashed names.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="kasten-page" content="signin" />
+    <title>Sign in · Kasten</title>
+    <link rel="stylesheet" href="signin.css" />
+    <script src="signin.js" defer></script>
+  </head>
+  <body>
+    <main class="task">
+      <div class="task-card">
+        <div class="task-mark">
+          <svg
+            class="icon"
+            viewBox="0 0 20 20"
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3.5" y="4.5" width="13" height="11" rx="1" />
+            <path d="M3.5 8.5h13" />
+          </svg>
+          <span>Kasten</span>
+        </div>
+        <h1 id="title">Sign in</h1>
+        <noscript><p class="error">Kasten's sign-in page needs JavaScript.</p></noscript>
+        <p id="alert" class="error" role="alert" hidden></p>
+        <form id="login-form" class="stack" novalidate hidden>
+          <div class="field" id="field-username">
+            <label class="field-label" for="username">Email</label>
+            <input
+              id="username"
+              name="username"
+              type="email"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+            />
+          </div>
+          <div class="field" id="field-password">
+            <label class="field-label" for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" />
+          </div>
+          <div class="field" id="field-otp" hidden>
+            <label class="field-label" for="otp">Sign-in code</label>
+            <input
+              id="otp"
+              name="otp"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+            />
+          </div>
+          <button id="submit-btn" class="button primary" type="submit">Sign in</button>
+        </form>
+        <div id="consent" class="stack" hidden>
+          <p id="consent-text"></p>
+          <div class="row">
+            <button id="allow-btn" class="button primary" type="button">Allow</button>
+            <button id="deny-btn" class="button" type="button">Deny</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

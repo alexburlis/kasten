@@ -1,0 +1,11 @@
+# Installed as /etc/dnf/repos.override.d/50-kasten-https.repo. Fedora's mirror list also offers
+# plain HTTP and rsync mirrors, and the firewall closes outgoing port 80: protocol=https keeps only
+# the HTTPS mirrors. Kasten does not use Cisco's OpenH264 repository.
+[fedora]
+metalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch&protocol=https
+
+[updates]
+metalink=https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&arch=$basearch&protocol=https
+
+[fedora-cisco-openh264]
+enabled=0

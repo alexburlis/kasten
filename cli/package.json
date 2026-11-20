@@ -1,0 +1,23 @@
+{
+  "name": "@kasten/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The kasten command: server setup through Stalwart's admin API, DNS records, accounts, key bundles and the app lock, app passwords, the daily safety check and delivery probe, the agent reader, and IMAP import.",
+  "license": "Apache-2.0",
+  "bin": {
+    "kasten": "./bin/kasten"
+  },
+  "type": "module",
+  "scripts": {
+    "kasten": "node src/main.ts",
+    "test": "vitest run test/unit",
+    "test:integration": "vitest run --no-file-parallelism test/integration",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@kasten/core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

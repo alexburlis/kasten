@@ -1,0 +1,28 @@
+# Run on a separate observer host with the dedicated probe credential.
+name: kasten-observer
+services:
+  probe:
+    image: kasten-cli:${KASTEN_VERSION:?set KASTEN_VERSION}
+    pull_policy: never
+    network_mode: host
+    user: "0:0"
+    cap_drop: [ALL]
+    read_only: true
+    mem_limit: 384m
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    command: [probe, --config, /etc/kasten/kasten.json]
+    volumes:
+      - type: bind
+        source: /var/lib/kasten-observer
+        target: /etc/kasten
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/kasten-observer/state
+        target: /etc/kasten/state
+        bind:
+          create_host_path: false
+    logging:
+      driver: journald

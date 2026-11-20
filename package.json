@@ -1,0 +1,29 @@
+{
+  "name": "kasten",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint --deny-warnings",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:integration": "vitest run --config tests/integration/vitest.config.ts",
+    "test:walkthrough": "pnpm --filter @kasten/web exec playwright test -c ../tests/walkthrough/playwright.config.ts",
+    "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:host",
+    "test:host": "python3 deploy/test/host.test.py"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.91.0",
+    "@types/node": "^24.19.2",
+    "oxfmt": "0.76.0",
+    "oxlint": "1.91.0",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.28.5"
+}

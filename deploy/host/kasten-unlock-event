@@ -1,0 +1,15 @@
+#!/bin/sh
+# Reports an unlock event to an existing Kuma push monitor. Default DOWN requires review.
+# KASTEN_EVENT_PUSH_STATUS can select the status required by a verified inverted monitor.
+set +x
+set -eu
+KASTEN_UNLOCK_PUSH_URL_FILE=
+KASTEN_EVENT_PUSH_STATUS=down
+# shellcheck source=deploy/host/host.env
+[ ! -r /etc/kasten/host.env ] || . /etc/kasten/host.env
+[ -n "$KASTEN_UNLOCK_PUSH_URL_FILE" ] || exit 0
+case ${1:-} in ok | failed) ;; *) echo "kasten-unlock-event: invalid result" >&2; exit 2 ;; esac
+case ${2:-} in tang | passphrase | existing) ;; *) echo "kasten-unlock-event: invalid method" >&2; exit 2 ;; esac
+KASTEN_PUSH_URL_FILE=$KASTEN_UNLOCK_PUSH_URL_FILE KASTEN_PUSH_STATUS=$KASTEN_EVENT_PUSH_STATUS \
+  KASTEN_PUSH_MESSAGE="unlock $1 $2 - acknowledge after review" \
+  /bin/sh "$(dirname "$0")/kasten-push"

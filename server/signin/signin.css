@@ -1,0 +1,150 @@
+/* Kasten's sign-in page: the web app's task card (web/src/styles/app.css, web/DESIGN.md). Keep the
+   tokens and rules below in step with that file. */
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --surface-2: #efefec;
+  --border: #e2e2de;
+  --text: #1d1e20;
+  --accent: #1f5f5b;
+  --danger: #a3261c;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --size: 14px;
+  --size-heading: 20px;
+  --radius: 8px;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141517;
+    --surface: #1c1d20;
+    --surface-2: #25272b;
+    --border: #2f3136;
+    --text: #e9e9e7;
+    --accent: #5fb3ab;
+    --danger: #ef7a6f;
+  }
+}
+
+@media (max-width: 719px) {
+  :root {
+    --size: 16px;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 var(--size) / 1.45 var(--font);
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: var(--size-heading);
+  font-weight: 600;
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+.task {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+
+.task-card {
+  width: min(460px, 100%);
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.task-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--surface-2);
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.error {
+  color: var(--danger);
+}

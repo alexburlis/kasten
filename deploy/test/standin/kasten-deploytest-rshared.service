@@ -1,0 +1,14 @@
+[Unit]
+Description=Test only: make / a shared mount, as systemd does on a VPS
+# Docker leaves the container's / private. Rootless Podman's mount namespace, made once at its
+# first use, would then never see the volume that an unlock mounts later, nor its unmount.
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mount --make-rshared /
+
+[Install]
+WantedBy=sysinit.target

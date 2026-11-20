@@ -1,0 +1,959 @@
+/* Task screens, the recovery sheet, settings, outbox, drafts, dialogs and toasts
+   (web/DESIGN.md: Task screens, Settings, Outbox and Drafts, Dialogs, Shell > Toast). */
+
+/* --- splash and task screens ----------------------------------------------------------------- */
+
+.splash,
+.task {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+
+.splash {
+  gap: 16px;
+  color: var(--text-2);
+  font-size: 14px;
+  text-align: center;
+}
+
+.task {
+  gap: 28px;
+}
+
+.splash-mark,
+.task-mark .icon {
+  width: 44px;
+  height: 44px;
+  color: var(--text);
+  stroke-width: 1.1;
+}
+
+.task-mark {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.task-mark span {
+  font: 400 20px/1 var(--serif);
+  letter-spacing: -0.01em;
+}
+
+.task-card,
+.sheet-actions {
+  display: grid;
+  gap: 16px;
+  width: min(400px, 100%);
+  padding: 34px 32px 28px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition:
+    opacity var(--t-pane) var(--ease-paper),
+    transform var(--t-pane) var(--ease-paper);
+}
+
+@starting-style {
+  .task-card,
+  .sheet-actions {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.task-card h1,
+.sheet-actions h1 {
+  margin-bottom: 8px;
+  font: 400 28px/1.15 var(--serif);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.task-card > p,
+.sheet-actions > p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.task-card > p:not([role]),
+.sheet-actions > p {
+  color: var(--text-2);
+}
+
+/* Two full-width choices of equal standing, such as the locked-key screen's. */
+.task-buttons {
+  display: grid;
+  gap: 8px;
+}
+
+/* "or enter your recovery code" between a passkey button and the recovery code field. */
+.task-or {
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Add a passkey: in Settings and after a new key's recovery sheet. */
+.passkey-setup {
+  display: grid;
+  gap: 12px;
+}
+
+.passkey-setup > p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.passkey-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.passkey-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Without an error slot before them, the buttons keep the same 38 px from the text that the
+   other task cards have (16 px gap, 6 px empty slot, 16 px gap). */
+.task-card > :is(p, pre) + .task-buttons {
+  margin-top: 22px;
+}
+
+/* The card that shows a public key is wide enough for its 64-column armour lines. */
+.task-card:has(.public-key) {
+  width: min(520px, 100%);
+}
+
+/* ErrorText always renders this slot, so an error does not move the button below it. The
+   negative margin keeps the gap around an empty slot close to the stack's own gap. */
+.error-slot {
+  min-height: 18px;
+  margin: -6px 0;
+}
+
+.error-slot .error {
+  line-height: 18px;
+}
+
+.fingerprint {
+  display: block;
+  max-width: 100%;
+  width: 27ch;
+  margin-top: 4px;
+  color: var(--text);
+  font: 500 13px/1.6 var(--mono);
+  letter-spacing: 0.02em;
+}
+
+.public-key {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  font-size: 11px;
+  line-height: 1.45;
+  /* The armour's own lines, so the key reads as the operator receives it; phones scroll. */
+  white-space: pre;
+}
+
+.scanner {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.scanner video {
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+}
+
+.scanner p {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+@media (max-width: 719px) {
+  .task-card,
+  .sheet-actions {
+    padding: 28px 22px 22px;
+  }
+
+  .task-card h1,
+  .sheet-actions h1 {
+    font-size: 26px;
+  }
+}
+
+/* --- recovery sheet ---------------------------------------------------------------------------- */
+
+.sheet-screen {
+  display: grid;
+  justify-items: center;
+  gap: 28px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: max(40px, env(safe-area-inset-top)) 16px max(64px, env(safe-area-inset-bottom));
+}
+
+.sheet-actions {
+  width: 100%;
+}
+
+.sheet-actions .check {
+  margin-top: 4px;
+}
+
+/* The new key's recovery code, large enough to copy by hand. */
+.recovery-code {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.recovery-code p {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.recovery-code .recovery-code-value {
+  color: var(--text);
+  font: 500 17px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* The sheet is paper in both themes: it is what gets printed. */
+.sheet {
+  width: 100%;
+  padding: 44px 48px 48px;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  color: #000;
+  color-scheme: light;
+}
+
+.sheet h2 {
+  margin-bottom: 8px;
+  font: 400 24px/1.2 var(--serif);
+}
+
+.sheet-instruction {
+  max-width: 60ch;
+  margin-bottom: 24px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.sheet-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 20px;
+  margin: 0;
+  padding: 14px 0;
+  border-block: 1px solid #ccc;
+  font-size: 13.5px;
+}
+
+.sheet-facts dt {
+  font-weight: 600;
+}
+
+.sheet-facts dd {
+  margin: 0;
+}
+
+.sheet-facts .mono {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.sheet-codes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 28px 0;
+}
+
+.sheet-codes figure {
+  margin: 0;
+  break-inside: avoid;
+  text-align: center;
+}
+
+.sheet-codes figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.qr {
+  display: block;
+  width: 300px;
+  height: 300px;
+  max-width: 100%;
+  shape-rendering: crispEdges;
+}
+
+.sheet-key {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (max-width: 719px) {
+  .sheet {
+    padding: 28px 20px 32px;
+  }
+}
+
+/* Only the recovery sheet prints: a white page, black text, no shadows and no radius. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  /* A light canvas, so the page margins do not print dark in dark mode. !important in this
+     layer beats the unlayered color-scheme in app.css. */
+  :root {
+    color-scheme: light !important;
+  }
+
+  html,
+  body {
+    height: auto;
+    background: #fff;
+    color: #000;
+  }
+
+  .sheet-screen {
+    display: block;
+    max-width: none;
+    padding: 0;
+  }
+
+  .sheet {
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* One A4 page: every code on one row and the key text never split across pages. Codes are
+     at most version 15 (85 modules with the quiet zone), so 54 mm is about 0.64 mm a module. */
+  .sheet-codes {
+    gap: 6mm;
+    margin: 8mm 0;
+    break-inside: avoid;
+  }
+
+  .qr {
+    width: 54mm;
+    height: 54mm;
+  }
+
+  .sheet-key {
+    break-inside: avoid;
+  }
+}
+
+@page {
+  size: A4;
+  margin: 14mm;
+}
+
+/* --- settings ---------------------------------------------------------------------------------- */
+
+/* The sheet beside the sidebar: a centred column of at most 760 px with 48 px padding. */
+.settings {
+  container: settings / inline-size;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 48px max(48px, calc((100% - 664px) / 2)) calc(96px + env(safe-area-inset-bottom));
+  background: var(--surface);
+}
+
+.settings-title {
+  margin: 0 0 30px;
+  font: 400 32px/1.1 var(--serif);
+  letter-spacing: -0.015em;
+}
+
+/* Ruled two-column sections: the heading in a 180 px column, everything else beside it. */
+.settings section {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-content: start;
+  gap: 12px 28px;
+  padding: 22px 0 24px;
+  border-top: 1px solid var(--rule);
+}
+
+.settings section > h2 {
+  grid-row: 1;
+  grid-column: 1;
+  padding-top: 1px;
+  font: 400 18px/1.3 var(--serif);
+}
+
+.settings section > :not(h2) {
+  grid-column: 2;
+}
+
+.settings p:not(.error) {
+  max-width: 56ch;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.settings .stack {
+  gap: 12px;
+}
+
+/* A lone button in a stack (sign-in codes) keeps its own width, like the buttons in rows. */
+.settings .stack > .button {
+  justify-self: start;
+}
+
+.settings .row {
+  gap: 8px;
+}
+
+/* Every on/off choice: the label on the left, the switch on the right. */
+.switch-row {
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 56ch;
+  min-height: 34px;
+}
+
+.settings .field {
+  justify-items: start;
+}
+
+.settings .field input {
+  max-width: 320px;
+}
+
+.settings .qr {
+  width: 200px;
+  height: 200px;
+  border-radius: 4px;
+}
+
+@container settings (max-width: 600px) {
+  .settings section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings section > h2,
+  .settings section > :not(h2) {
+    grid-row: auto;
+    grid-column: 1;
+  }
+}
+
+@media (min-width: 720px) and (max-width: 1199px) {
+  .settings {
+    padding-inline: max(32px, calc((100% - 664px) / 2));
+  }
+}
+
+@media (max-width: 719px) {
+  /* Room under the last button for the floating Compose pill. */
+  .settings {
+    padding: 20px 20px calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .settings-title {
+    margin-bottom: 20px;
+    font-size: 31px;
+  }
+
+  .settings section {
+    padding: 18px 0 20px;
+  }
+}
+
+/* --- outbox ------------------------------------------------------------------------------------ */
+
+.outbox,
+.drafts {
+  flex: 1;
+}
+
+.outbox-list {
+  margin: 0;
+  padding: 0 0 72px;
+  list-style: none;
+}
+
+.outbox-item {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding: 12px 20px 14px var(--gutter);
+}
+
+.outbox-item::after {
+  content: "";
+  position: absolute;
+  left: var(--gutter);
+  right: 20px;
+  bottom: 0;
+  height: 1px;
+  background: var(--rule);
+}
+
+.outbox-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.outbox-subject {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  font: 400 15px/20px var(--serif);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outbox-to {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outbox-main time {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.outbox-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 13px;
+}
+
+.outbox-error {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.refused {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.refused .mono {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+@media (max-width: 719px) {
+  .outbox-list {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .outbox-item {
+    padding-right: 16px;
+  }
+
+  .outbox-item::after {
+    right: 16px;
+  }
+
+  .outbox-main {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .outbox-subject {
+    flex: 1 1 100%;
+    max-width: none;
+    font-size: 16.5px;
+    line-height: 21px;
+  }
+}
+
+/* --- drafts: list rows (list.css) without checkbox or star, plus a discard button ------------- */
+
+.drafts .rows {
+  padding-bottom: 72px;
+}
+
+/* Draft rows have no checkbox, so the button names its column rather than taking the first. */
+.drafts .row-button {
+  grid-column: 2;
+}
+
+.row-discard {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  margin-top: -16px;
+  opacity: 0;
+  transition: opacity var(--t-hover) var(--ease-out);
+}
+
+.drafts .row-item:is(:hover, :focus-within) .row-discard {
+  opacity: 1;
+}
+
+/* The discard button takes the date's place, as quick actions do in the mailbox. */
+.drafts .row-item:is(:hover, :focus-within) .row-line time {
+  opacity: 0;
+}
+
+/* Touch screens have no hover, so the button always shows: a 44 px target centred on the row,
+   in a column of its own so it never covers the date or the snippet. */
+@media (hover: none) {
+  .row-discard {
+    width: 44px;
+    height: 44px;
+    margin-top: -22px;
+    opacity: 1;
+  }
+
+  .drafts .row-button {
+    padding-right: 64px;
+  }
+
+  .drafts .row-item:is(:hover, :focus-within) .row-line time {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 719px) {
+  .drafts .rows {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .row-discard {
+    right: 6px;
+  }
+}
+
+@media (hover: none) and (max-width: 719px) {
+  .drafts .row-button {
+    padding-right: 54px;
+  }
+}
+
+/* --- dialogs ----------------------------------------------------------------------------------- */
+
+dialog.modal {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--shadow-sheet);
+  color: var(--text);
+  transition:
+    opacity var(--t-pane) var(--ease-paper),
+    transform var(--t-pane) var(--ease-paper);
+}
+
+dialog.modal.wide {
+  width: min(560px, calc(100vw - 32px));
+}
+
+@starting-style {
+  dialog.modal[open] {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+/* Literal colours, not --backdrop: older Safari does not let ::backdrop inherit custom
+   properties. They match --backdrop in web/DESIGN.md. */
+dialog.modal::backdrop {
+  background: rgb(29 26 22 / 0.32);
+  transition: opacity var(--t-pane) var(--ease-paper);
+}
+
+@media (prefers-color-scheme: dark) {
+  dialog.modal::backdrop {
+    background: rgb(0 0 0 / 0.5);
+  }
+}
+
+@starting-style {
+  dialog.modal[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+.modal-body {
+  padding: 24px;
+}
+
+.modal-body h2 {
+  margin-bottom: 8px;
+  font: 400 20px/1.3 var(--serif);
+}
+
+.modal-body p:not(.error) {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* The keyboard shortcuts: a ruled two-column table, keycaps on the left. */
+.shortcuts {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.shortcuts th,
+.shortcuts td {
+  height: 34px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: middle;
+}
+
+/* The key column is as wide as its widest keys, so each action sits just after its keys. */
+.shortcuts th {
+  width: 1%;
+  padding-right: 28px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.shortcuts kbd {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.shortcut-or {
+  margin: 0 6px;
+  color: var(--text-3);
+}
+
+/* --- toasts ------------------------------------------------------------------------------------ */
+
+/* At 1200 px and wider the toast sits in the sidebar column directly above its foot, so it never
+   covers mail. */
+.toast-region {
+  position: fixed;
+  left: 12px;
+  bottom: calc(var(--sidebar-foot) + 26px);
+  z-index: 60;
+  width: calc(var(--sidebar) - 26px);
+}
+
+.toast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 10px 6px 8px 12px;
+  border-radius: 9px;
+  background: var(--ink);
+  box-shadow:
+    var(--edge),
+    0 12px 28px -10px rgb(0 0 0 / 0.45);
+  color: var(--on-ink);
+  font-size: 13px;
+  line-height: 1.35;
+  transition:
+    opacity var(--t-pane) var(--ease-paper),
+    transform var(--t-pane) var(--ease-paper);
+}
+
+@starting-style {
+  .toast {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.toast.error {
+  box-shadow:
+    inset 3px 0 0 var(--danger),
+    var(--edge),
+    0 12px 28px -10px rgb(0 0 0 / 0.45);
+}
+
+.toast-text {
+  grid-column: 1;
+  grid-row: 1;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+/* In the narrow sidebar column a toast with an action gives the text the full width and puts
+   the action and the dismiss button on the row below, side by side. */
+@media (min-width: 1200px) {
+  .toast:has(.toast-action) .toast-text {
+    grid-column: 1 / -1;
+    padding-right: 6px;
+  }
+
+  .toast:has(.toast-action) .toast-dismiss {
+    grid-row: 2;
+    align-self: center;
+  }
+}
+
+.toast-action {
+  grid-column: 1;
+  justify-self: start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* The ink card inverts the page, so the dismiss button restates its colours and focus ring. */
+.toast-dismiss {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  width: 24px;
+  height: 24px;
+  color: inherit;
+  opacity: 0.7;
+}
+
+@media (hover: hover) {
+  .toast-dismiss:hover {
+    background: color-mix(in srgb, var(--on-ink) 14%, transparent);
+    color: inherit;
+    opacity: 1;
+  }
+}
+
+.toast-action:focus-visible,
+.toast-dismiss:focus-visible {
+  outline-color: var(--on-ink);
+}
+
+@media (min-width: 720px) and (max-width: 1199px) {
+  .toast-region {
+    left: 16px;
+    bottom: 16px;
+    width: auto;
+    max-width: 420px;
+  }
+}
+
+@media (max-width: 1199px) {
+  .toast {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    padding: 8px 6px 8px 14px;
+  }
+
+  .toast-action {
+    grid-column: 2;
+    grid-row: 1;
+    padding: 0 8px;
+  }
+
+  .toast-dismiss {
+    grid-column: 3;
+    align-self: center;
+  }
+}
+
+/* Phones: the width of the screen, above the Compose pill. */
+@media (max-width: 719px) {
+  .toast-region {
+    left: calc(16px + env(safe-area-inset-left));
+    right: calc(16px + env(safe-area-inset-right));
+    bottom: calc(88px + env(safe-area-inset-bottom));
+    width: auto;
+  }
+
+  .toast {
+    min-height: 48px;
+    font-size: 14px;
+  }
+
+  /* Undo is a 44 px tall target; the toast's own padding is trimmed so it stays compact. */
+  .toast:has(.toast-action) {
+    padding-block: 2px;
+  }
+
+  .toast-action {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 12px;
+  }
+
+  .toast-dismiss {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* Reduced motion: entrances keep a short fade and do not move. Layered !important beats the
+   unlayered rule in app.css. */
+@media (prefers-reduced-motion: reduce) {
+  .task-card,
+  .sheet-actions,
+  .toast,
+  dialog.modal,
+  dialog.modal::backdrop {
+    transform: none !important;
+    transition: opacity 120ms linear !important;
+  }
+
+  .row-discard {
+    transition: none !important;
+  }
+}

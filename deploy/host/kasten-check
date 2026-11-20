@@ -1,0 +1,7 @@
+#!/bin/sh
+# Optional co-located check for generic installs. The personal deployment runs this check
+# from the Mac instead (deploy/observer). The CLI combines every non-probe account into one
+# report and one Kuma heartbeat, so a healthy account cannot overwrite another account's down.
+set -eu
+
+exec kasten-cli check --config /etc/kasten/kasten.json "$@"

@@ -1,0 +1,75 @@
+Delivered-To: you@kasten.test
+X-Spam-Status: No
+Received: from mail.bank.test (localhost [127.0.0.1])
+	by mx.kasten.test (Stalwart SMTP) with ESMTP id 4B031FE3C80B200;
+	Fri, 30 Oct 2026 13:38:04 +0000
+Authentication-Results: mx.kasten.test;
+	dkim=pass header.i=@bank.test header.s=sel1 header.b=Pio01MCB;
+	spf=none (mx.kasten.test: no SPF records found for postmaster@mail.bank.test) smtp.helo=mail.bank.test;
+	spf=pass (mx.kasten.test: domain of noreply@bank.test designates 127.0.0.1 as permitted sender) smtp.mailfrom=noreply@bank.test;
+	iprev=pass policy.iprev=127.0.0.1;
+	dmarc=pass header.from=bank.test policy.dmarc=reject
+Received-SPF: pass (mx.kasten.test: domain of noreply@bank.test designates 127.0.0.1 as permitted sender)
+	receiver=mx.kasten.test; client-ip=127.0.0.1; envelope-from="noreply@bank.test"; helo=mail.bank.test;
+X-Spam-Result: ARC_NA (0.00),
+	DKIM2_NA (0.00),
+	DKIM_ALLOW (0.00),
+	DMARC_POLICY_ALLOW (0.00),
+	ENV_FROM_INVALID (0.00),
+	FROM_EQ_ENV_FROM (0.00),
+	FROM_INVALID (0.00),
+	HELO_NOT_FQDN (0.00),
+	MID_RHS_MATCH_ENV_FROM (0.00),
+	MID_RHS_MATCH_FROM (0.00),
+	RCPT_COUNT_ONE (0.00),
+	RCVD_COUNT_ZERO (0.00),
+	RCVD_NO_TLS_LAST (0.00),
+	SINGLE_SHORT_PART (0.00),
+	SPF_ALLOW (0.00),
+	TO_DN_NONE (0.00),
+	TO_MATCH_ENVRCPT_ALL (0.00)
+X-Spam-Score: ham, score=0.00
+Return-Path: <noreply@bank.test>
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=bank.test;
+ i=@bank.test; q=dns/txt; s=sel1; t=1793367484; h=from : to : subject :
+ date : message-id; bh=KCM64AnUgKsh3eWioMdcYzPBdjALBKxFXYDiGe+QwsQ=;
+ b=Pio01MCB/EWUaz/IyH5ZGeo8Z5sv6S6XA2mmm+e/Z0hF43f+JtbMBf7jE/wU3PR8BoOIX
+ A78m9WpyC32DJ4w3LAQ6v05TInBBg6eRp16aYwG01lAQk+JecPtZFdq19wQs+BltbuPtaPG
+ GhoAERnBtXz0sKOm+T9vegl7gvPRppe49ss3k0FF7FW0//fRiC/eNp5f8/M4tznFmOTJr0/
+ 6xdSYs38xMS1YAT/NKbYEr0MB+nqV5Vi88Q7hL5AhgEVGkDoN/qdxpCMIwoZbgVL2FapsDx
+ TZdwOcQGYo9Ff8BSl4EckYLDm2FUFdCaPtBrlNdquOudvRQjNAhQ0kNx0f0g==
+From: Bank <noreply@bank.test>
+To: you@kasten.test
+Subject: Your sign-in code is 482913 [T2ef764-A1]
+Date: Fri, 30 Oct 2026 13:38:04 -0000
+Message-ID: <179336748436.88169.15713966859987802426@bank.test>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted;
+	protocol="application/pgp-encrypted";
+	boundary="18e35239b2f0ee68_4d1aa69bef80b3e0_781aa403bbc9f076"
+
+OpenPGP/MIME message (Automatically encrypted by Stalwart)
+
+--18e35239b2f0ee68_4d1aa69bef80b3e0_781aa403bbc9f076
+Content-Type: application/pgp-encrypted
+
+Version: 1
+
+--18e35239b2f0ee68_4d1aa69bef80b3e0_781aa403bbc9f076
+Content-Type: application/octet-stream; name="encrypted.asc"
+Content-Disposition: inline; filename="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+
+wV4D5lHby1xc58sSAQdArWTgYp/QReiVf9tzpQlGhAn2ciHIVHG3s+eOf/bjPnkw
+fJcWRbEynSfJzDMiBGdDid4whndDjYPgNBV9WaA9MnGcbHBLVHWGWTk8q6tK42qF
+wV4DoT2dOzNNJTESAQdAgvjbc3R8sw3AIY4EoyLwavhSF7Xnob+AyT7+TSXDoBsw
+nFVrIEwguHACBZBA9l2X7YCd2gyDhrpcTQDg842uuwPVW0XzSJlLvE/R6uUC90i4
+0qcB2spFu1i4u2a4TXdaGnYXXOhB6qlaMftdx5CkSjE1oGyqjjPTzoCKRpTWfyXa
+QrXCIk9J+nX+R+bWIsLR53NXkYa38ZJzw8hICNEJE/eGktNJnNuxLSjOKDgRxv5X
+G+59F3FK5Yxy1PCu65gVEHySoOK1qL7d7Owu9pHFE9xwQKZ0X2aZZYmVQzoNv8/T
+Woggmisp6+ok/kyfD5llFjHA/rkBznIMMQ==
+=V8PQ
+-----END PGP MESSAGE-----
+
+--18e35239b2f0ee68_4d1aa69bef80b3e0_781aa403bbc9f076--

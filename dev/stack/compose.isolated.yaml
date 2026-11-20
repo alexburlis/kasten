@@ -1,0 +1,35 @@
+# A second, isolated dev stack, for tests that must not touch the shared one. ./kasten applies
+# this file when KASTEN_DEV_PROJECT, KASTEN_DEV_PORT_BASE and KASTEN_DEV_NET are set (see the
+# wrapper's header): its own ports, subnets and image tags. It has no web app.
+services:
+  mail:
+    image: kasten-server:${KASTEN_DEV_IMAGE_TAG:?}
+    environment:
+      STALWART_PUBLIC_URL: http://localhost:${KASTEN_DEV_PORT_API:?}
+    ports: !override
+      - 127.0.0.1:${KASTEN_DEV_PORT_API:?}:8080
+      - 127.0.0.1:${KASTEN_DEV_PORT_SMTP:?}:25
+      - 127.0.0.1:${KASTEN_DEV_PORT_IMAP:?}:143
+  outbox:
+    ports: !override
+      - 127.0.0.1:${KASTEN_DEV_PORT_OUTBOX:?}:8025
+  web:
+    image: kasten-web:${KASTEN_DEV_IMAGE_TAG:?}
+    ports: !override
+      - 127.0.0.1:${KASTEN_DEV_PORT_WEB:?}:8080
+  cli:
+    image: kasten-cli:${KASTEN_DEV_IMAGE_TAG:?}
+  gpg:
+    image: kasten-dev-gpg:${KASTEN_DEV_IMAGE_TAG:?}
+
+networks:
+  default:
+    ipam: !override
+      config:
+        - subnet: 10.${KASTEN_DEV_NET:?}.80.0/24
+          gateway: 10.${KASTEN_DEV_NET:?}.80.1
+  admin:
+    ipam: !override
+      config:
+        - subnet: 10.${KASTEN_DEV_NET:?}.81.0/28
+          gateway: 10.${KASTEN_DEV_NET:?}.81.1

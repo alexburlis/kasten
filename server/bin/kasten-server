@@ -1,0 +1,515 @@
+#!/bin/bash
+# kasten-server: entrypoint of the kasten-server image. "kasten-server help" lists the commands;
+# server/README.md describes them and their exit codes.
+set -euo pipefail
+umask 077
+cd /
+
+readonly DATA=/var/lib/kasten
+readonly MARKER=$DATA/.kasten-volume
+readonly LOCK=$DATA/.kasten-lock
+readonly BACKUP_LOCK=$DATA/.kasten-backup-lock
+readonly STALWART_DIR=$DATA/stalwart
+readonly CONFIG=$STALWART_DIR/config.json
+readonly DB=$STALWART_DIR/stalwart.sqlite
+readonly RULES=$STALWART_DIR/spam-filter-rules.json.gz
+readonly SECRETS=$DATA/secrets
+readonly RECOVERY_SECRET=$SECRETS/recovery-admin
+readonly RESTIC_CACHE=$DATA/restic-cache
+readonly VOLUME_TMP=$DATA/tmp
+readonly IMAGE_DIR=/opt/kasten
+readonly RUN_DIR=/run/kasten
+readonly UNBOUND_CONF=/etc/kasten/unbound.conf
+readonly RESOLVER_PORT=5335
+readonly BACKUP_HOST=kasten
+readonly BACKUP_TAG=kasten-sqlite
+readonly DUMP_NAME=stalwart.sql
+readonly UPGRADE_DIR=$DATA/upgrade
+
+readonly E_FAIL=1 E_USAGE=2 E_REFUSED=3 E_BUSY=4 E_RETENTION=5
+
+log() { printf 'kasten-server: %s\n' "$*" >&2; }
+fail() {
+  local code=$1
+  shift
+  log "error: $*"
+  exit "$code"
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage: kasten-server <command>
+
+  init                 prepare the data volume (idempotent); prints the volume id
+  recovery             run Stalwart in recovery mode for first-boot configuration
+  serve                run Unbound and Stalwart (the default command)
+  backup-init          create the restic repository if it does not exist
+  backup               back up the database to restic, then keep 30 daily snapshots
+  restore <id|latest>  replace the database from a backup (Stalwart must be stopped)
+  vacuum               compact the database (Stalwart must be stopped)
+  store-export <label>  protected complete-store snapshot, including all config (stopped only)
+  store-diff <a> <b>    compare complete-store manifests, printing hashes and filenames only
+  health               exit 0 if Stalwart answers /healthz/live
+  version              print the versions and pins of the bundled software
+EOF
+  exit "${1:-$E_USAGE}"
+}
+
+# pin <name> <field>: a field of the first PINS line for <name> (2 version, 3 arch, 4 sha256, 5 source).
+pin() {
+  awk -v n="$1" -v f="$2" '$1 == n { print $f; exit }' "$IMAGE_DIR/PINS"
+}
+
+# write_file <path>: write standard input to <path> atomically, mode 0600.
+write_file() {
+  local tmp="$1.tmp.$$"
+  cat >"$tmp"
+  sync "$tmp"
+  mv -f "$tmp" "$1"
+}
+
+random_hex() {
+  od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'
+}
+
+marker_id() {
+  local id
+  id=$(sed -n 's/^volume-id=//p' "$MARKER")
+  [[ $id =~ ^[0-9a-f]{32}$ ]] || return 1
+  printf '%s\n' "$id"
+}
+
+# Fail closed: nothing may touch the data directory unless it is the volume the deployment expects.
+require_volume() {
+  [ -f "$MARKER" ] || fail "$E_REFUSED" "$DATA has no Kasten marker: the data volume is missing or not mounted, or init has not run. Nothing was started."
+  local id
+  id=$(marker_id) || fail "$E_REFUSED" "the marker $MARKER is malformed"
+  [ -n "${KASTEN_VOLUME_ID:-}" ] || fail "$E_REFUSED" "KASTEN_VOLUME_ID is not set. Set it to the volume id that init printed when this volume was created."
+  [ "$id" = "$KASTEN_VOLUME_ID" ] || fail "$E_REFUSED" "this volume is $id but KASTEN_VOLUME_ID expects $KASTEN_VOLUME_ID. Refusing to use a different volume."
+  [ -f "$CONFIG" ] && [ -f "$LOCK" ] && [ -f "$BACKUP_LOCK" ] || fail "$E_REFUSED" "the volume is incomplete; run init again"
+}
+
+# The exclusive volume lock is held by serve, recovery, restore and vacuum (and inherited by Stalwart).
+lock_volume() {
+  exec 9<"$LOCK"
+  flock -n -x 9 || fail "$E_BUSY" "Stalwart or a maintenance command is already using this volume. Stop it first."
+}
+
+lock_backup() {
+  exec 8<"$BACKUP_LOCK"
+  flock -n -x 8 || fail "$E_BUSY" "a backup or restore is already running on this volume"
+}
+
+cmd_init() {
+  [ "$#" -eq 0 ] || usage
+  [ -d "$DATA" ] && [ -w "$DATA" ] || fail "$E_FAIL" "$DATA is not a directory that $(id -un) can write"
+  local id created=false
+  if [ -f "$MARKER" ]; then
+    id=$(marker_id) || fail "$E_REFUSED" "the marker $MARKER is malformed"
+    if [ -n "${KASTEN_VOLUME_ID:-}" ] && [ "$id" != "$KASTEN_VOLUME_ID" ]; then
+      fail "$E_REFUSED" "this volume is $id but KASTEN_VOLUME_ID expects $KASTEN_VOLUME_ID"
+    fi
+  else
+    [ -z "${KASTEN_VOLUME_ID:-}" ] || fail "$E_REFUSED" "KASTEN_VOLUME_ID is set, so an existing volume is expected, but $DATA has no marker. Is the data disk mounted? To create a new volume, unset KASTEN_VOLUME_ID."
+    local entries entry
+    shopt -s nullglob dotglob
+    entries=("$DATA"/*)
+    shopt -u nullglob dotglob
+    for entry in "${entries[@]}"; do
+      [ "${entry##*/}" = lost+found ] || fail "$E_REFUSED" "$DATA is not empty and has no Kasten marker; refusing to adopt it"
+    done
+    id=$(random_hex 16)
+    write_file "$MARKER" <<EOF
+kasten-volume=1
+volume-id=$id
+created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+    created=true
+  fi
+
+  install -d -m 0700 "$STALWART_DIR" "$SECRETS" "$RESTIC_CACHE" "$VOLUME_TMP"
+  [ -e "$LOCK" ] || : >"$LOCK"
+  [ -e "$BACKUP_LOCK" ] || : >"$BACKUP_LOCK"
+  if [ ! -e "$CONFIG" ]; then
+    printf '{"@type":"Sqlite","path":"%s","poolMaxConnections":4}\n' "$DB" | write_file "$CONFIG"
+  fi
+  if [ ! -e "$RECOVERY_SECRET" ]; then
+    printf 'admin:%s\n' "$(random_hex 24)" | write_file "$RECOVERY_SECRET"
+  fi
+
+  local rules_sha rules_version image_sha
+  rules_sha=$(pin spam-rules 4)
+  rules_version=$(pin spam-rules 2)
+  image_sha=$(sha256sum "$IMAGE_DIR/spam-filter-rules.json.gz" | cut -d' ' -f1)
+  [ "$image_sha" = "$rules_sha" ] || fail "$E_FAIL" "the image's spam rules do not match PINS"
+  if [ ! -f "$RULES" ] || [ "$(sha256sum "$RULES" | cut -d' ' -f1)" != "$rules_sha" ]; then
+    cp "$IMAGE_DIR/spam-filter-rules.json.gz" "$RULES.tmp.$$"
+    mv -f "$RULES.tmp.$$" "$RULES"
+    log "installed spam rules v$rules_version"
+  fi
+  printf '%s  %s\n' "$rules_sha" "${RULES##*/}" | write_file "$RULES.sha256"
+
+  if [ "$created" = true ]; then
+    log "created volume $id. Set KASTEN_VOLUME_ID=$id wherever this volume is used."
+  else
+    log "volume $id is ready"
+  fi
+  printf '{"volumeId":"%s","created":%s,"config":"%s","recoveryAdminFile":"%s","spamRules":{"version":"%s","sha256":"%s","url":"file://%s"}}\n' \
+    "$id" "$created" "$CONFIG" "$RECOVERY_SECRET" "$rules_version" "$rules_sha" "$RULES"
+}
+
+cmd_recovery() {
+  [ "$#" -eq 0 ] || usage
+  require_volume
+  lock_volume
+  local port=${KASTEN_RECOVERY_PORT:-8080} admin
+  [[ $port =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || fail "$E_USAGE" "KASTEN_RECOVERY_PORT must be a port number"
+  admin=$(<"$RECOVERY_SECRET")
+  [[ $admin == admin:?* ]] || fail "$E_FAIL" "$RECOVERY_SECRET is malformed"
+  export TMPDIR=$VOLUME_TMP
+  log "recovery mode on port $port, for first-boot configuration only"
+  STALWART_RECOVERY_MODE=1 STALWART_RECOVERY_MODE_PORT=$port STALWART_RECOVERY_ADMIN=$admin \
+    exec /usr/local/bin/stalwart --config "$CONFIG"
+}
+
+# Development only: trust one more CA for outgoing TLS. The image runs without root, so the CA is
+# added to a per-container copy of the system bundle, which Stalwart's TLS client (rustls with the
+# platform verifier) and OpenSSL read through SSL_CERT_FILE.
+trust_extra_ca() {
+  local ca=${KASTEN_EXTRA_CA_FILE:-} subject constraints
+  [ -n "$ca" ] || return 0
+  [ -r "$ca" ] || fail "$E_FAIL" "KASTEN_EXTRA_CA_FILE ($ca) is not readable"
+  subject=$(openssl x509 -in "$ca" -noout -subject -nameopt oneline 2>/dev/null) || fail "$E_FAIL" "KASTEN_EXTRA_CA_FILE is not a PEM certificate"
+  constraints=$(openssl x509 -in "$ca" -noout -ext basicConstraints 2>/dev/null) || constraints=
+  [[ $constraints == *CA:TRUE* ]] || fail "$E_FAIL" "KASTEN_EXTRA_CA_FILE is not a CA certificate"
+  cat /etc/ssl/certs/ca-certificates.crt "$ca" >"$RUN_DIR/ca-certificates.crt"
+  export SSL_CERT_FILE=$RUN_DIR/ca-certificates.crt
+  log "DEVELOPMENT ONLY: trusting the extra CA ($subject) from KASTEN_EXTRA_CA_FILE"
+}
+
+# Development only: forward names to Docker's DNS without DNSSEC validation. The local stack
+# forwards "outbox" (a compose service name, unknown to the public DNS) and "." (everything),
+# because many networks block the direct port-53 traffic that recursion needs.
+dev_dns_forward() {
+  local conf=$RUN_DIR/unbound-dev.conf names=${KASTEN_DEV_DNS_FORWARD:-} name zones=()
+  : >"$conf"
+  [ -n "$names" ] || return 0
+  for name in ${names//,/ }; do
+    if [ "$name" = . ]; then
+      zones+=(.)
+    elif [[ $name =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$ ]]; then
+      zones+=("$name.")
+    else
+      fail "$E_USAGE" "KASTEN_DEV_DNS_FORWARD has an invalid name: $name"
+    fi
+  done
+  {
+    printf 'server:\n  do-not-query-localhost: no\n'
+    printf '  domain-insecure: "%s"\n' "${zones[@]}"
+    # Docker's DNS strips DNSSEC records, so the root trust anchor cannot be primed through it.
+    [[ " ${zones[*]} " != *" . "* ]] || printf '  module-config: "iterator"\n'
+    printf 'forward-zone:\n  name: "%s"\n  forward-addr: 127.0.0.11\n' "${zones[@]}"
+  } >"$conf"
+  log "DEVELOPMENT ONLY: Unbound forwards ${zones[*]} to Docker's DNS without DNSSEC validation (KASTEN_DEV_DNS_FORWARD)"
+}
+
+# wait_tcp <port> <seconds> <pid>: wait until 127.0.0.1:<port> accepts, while <pid> is alive.
+wait_tcp() {
+  local port=$1 tries=$(($2 * 5)) pid=$3
+  while [ "$tries" -gt 0 ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    if { exec 3<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null; then
+      exec 3>&-
+      return 0
+    fi
+    sleep 0.2
+    tries=$((tries - 1))
+  done
+  return 1
+}
+
+# stop_and_wait <pid>: send SIGTERM and wait until the process is gone.
+stop_and_wait() {
+  kill -TERM "$1" 2>/dev/null || true
+  while kill -0 "$1" 2>/dev/null; do
+    wait "$1" 2>/dev/null || true
+  done
+}
+
+cmd_serve() {
+  [ "$#" -eq 0 ] || usage
+  require_volume
+  if [ -n "$(compgen -e STALWART_RECOVERY_ || true)" ]; then
+    fail "$E_REFUSED" "a STALWART_RECOVERY_* variable is set; serve never runs Stalwart with recovery settings"
+  fi
+  lock_volume
+  export TMPDIR=$VOLUME_TMP
+  trust_extra_ca
+  dev_dns_forward
+
+  /usr/sbin/unbound -d -c "$UNBOUND_CONF" &
+  local unbound_pid=$!
+  wait_tcp "$RESOLVER_PORT" 30 "$unbound_pid" || {
+    stop_and_wait "$unbound_pid"
+    fail "$E_FAIL" "Unbound did not start on 127.0.0.1:$RESOLVER_PORT"
+  }
+  log "Unbound is listening on 127.0.0.1:$RESOLVER_PORT"
+
+  /usr/local/bin/stalwart --config "$CONFIG" &
+  local stalwart_pid=$!
+  log "Stalwart started (pid $stalwart_pid)"
+
+  local stopping=false exited rc
+  trap 'stopping=true; kill -TERM "$stalwart_pid" 2>/dev/null || true' TERM INT
+  set +e
+  while :; do
+    exited=
+    # wait -p unsets "exited" when a trapped signal interrupts it, hence ${exited:-}.
+    wait -n -p exited "$unbound_pid" "$stalwart_pid"
+    rc=$?
+    if [ -n "${exited:-}" ] || [ "$stopping" = true ]; then
+      break
+    fi
+  done
+  if [ "$stopping" = true ]; then
+    log "stopping"
+    stop_and_wait "$stalwart_pid"
+    stop_and_wait "$unbound_pid"
+    exit 0
+  fi
+  if [ "${exited:-}" = "$stalwart_pid" ]; then
+    log "Stalwart exited with status $rc; stopping Unbound and the container"
+    stop_and_wait "$unbound_pid"
+  else
+    log "Unbound exited with status $rc; stopping Stalwart and the container"
+    stop_and_wait "$stalwart_pid"
+  fi
+  [ "$rc" -ne 0 ] || rc=$E_FAIL
+  exit "$rc"
+}
+
+cmd_health() {
+  [ "$#" -eq 0 ] || usage
+  local port=${KASTEN_HEALTH_PORT:-8080} status
+  { exec 3<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null || exit "$E_FAIL"
+  printf 'GET /healthz/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+  IFS= read -r -t 4 status <&3 || exit "$E_FAIL"
+  [[ $status == HTTP/1.[01]\ 200* ]] || exit "$E_FAIL"
+}
+
+# Each binary must run and report its version; a binary that cannot run fails the command. The
+# spam rules appear only among the pins: Stalwart imports rules only at a new volume's first
+# start, so the image's pin does not show which rules a running server uses.
+cmd_version() {
+  [ "$#" -eq 0 ] || usage
+  local arch stalwart restic sqlite unbound
+  arch=$(dpkg --print-architecture)
+  stalwart=$(/usr/local/bin/stalwart --version 2>&1 | sed -n 1p) || fail "$E_FAIL" "stalwart does not run: $stalwart"
+  restic=$(/usr/local/bin/restic version 2>&1 | sed -n 1p) || fail "$E_FAIL" "restic does not run: $restic"
+  sqlite=$(sqlite3 --version | cut -d' ' -f1) || fail "$E_FAIL" "sqlite3 does not run"
+  unbound=$(/usr/sbin/unbound -V | sed -n 's/^Version //p') || fail "$E_FAIL" "unbound does not run"
+  printf 'architecture: %s\nstalwart: %s\nrestic: %s\nsqlite3: %s\nunbound: %s\n' \
+    "$arch" "$stalwart" "$restic" "$sqlite" "$unbound"
+  printf 'pins (%s and all architectures):\n' "$arch"
+  awk -v a="$arch" '$1 !~ /^#/ && NF >= 5 && ($3 == a || $3 == "all") { printf "  %-11s %-12s sha256:%s  %s\n", $1, $2, $4, $5 }' "$IMAGE_DIR/PINS"
+}
+
+# Restic settings come from the environment. Backend credentials may come from a file named by
+# KASTEN_BACKUP_ENV_FILE (NAME=value lines), exported only to this process and its children.
+restic_setup() {
+  [ -n "${RESTIC_REPOSITORY:-}" ] || fail "$E_USAGE" "RESTIC_REPOSITORY is not set"
+  [ -n "${RESTIC_PASSWORD_FILE:-}" ] && [ -r "$RESTIC_PASSWORD_FILE" ] || fail "$E_USAGE" "RESTIC_PASSWORD_FILE must name a readable file"
+  [ -z "${RESTIC_PASSWORD:-}" ] || fail "$E_USAGE" "RESTIC_PASSWORD is set; give the password only through RESTIC_PASSWORD_FILE"
+  local file=${KASTEN_BACKUP_ENV_FILE:-} line name n=0
+  if [ -n "$file" ]; then
+    [ -r "$file" ] || fail "$E_USAGE" "KASTEN_BACKUP_ENV_FILE ($file) is not readable"
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      case $line in '' | '#'*) continue ;; esac
+      [[ $line == *=* ]] || fail "$E_USAGE" "$file line $n is not NAME=value"
+      name=${line%%=*}
+      [[ $name =~ ^(B2|AWS|AZURE|GOOGLE|OS|ST|RCLONE)_[A-Z0-9_]+$ ]] || fail "$E_USAGE" "$file line $n: $name is not a restic backend variable"
+      export "$name=${line#*=}"
+    done <"$file"
+  fi
+  export TMPDIR=$VOLUME_TMP RESTIC_CACHE_DIR=$RESTIC_CACHE
+}
+
+cmd_backup_init() {
+  [ "$#" -eq 0 ] || usage
+  require_volume
+  restic_setup
+  local rc=0
+  /usr/local/bin/restic cat config >/dev/null 2>&1 || rc=$?
+  case $rc in
+    0) log "the restic repository already exists" ;;
+    10) /usr/local/bin/restic init ;;
+    *) fail "$E_FAIL" "cannot open the restic repository (restic status $rc)" ;;
+  esac
+}
+
+# The dump is one SQL stream: the page size, sqlite3's .dump, then a trailer that recreates
+# per-table row counts in a TEMP table whose CHECK constraint fails if a restored count differs.
+# All of it is read inside one read transaction, so the counts match the dumped rows exactly.
+readonly SQL_TABLES="sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+readonly SQL_PAGE_SIZE="SELECT 'PRAGMA page_size = ' || page_size || ';' FROM pragma_page_size();"
+readonly SQL_CHECK_TABLE="SELECT 'CREATE TEMP TABLE kasten_restore_check (name TEXT NOT NULL, expected INTEGER NOT NULL, actual INTEGER NOT NULL, CHECK (actual = expected));';"
+readonly SQL_CHECK_REPORT="SELECT 'SELECT ''kasten-rows '' || name || '' '' || actual FROM temp.kasten_restore_check ORDER BY name; SELECT ''kasten-restore-check '' || count(*) || '' tables'' FROM temp.kasten_restore_check;';"
+# Generates, for each table, a statement that prints the trailer's INSERT for that table.
+readonly SQL_TRAILER_GENERATOR="SELECT 'SELECT ''INSERT INTO temp.kasten_restore_check VALUES ('' || '
+  || quote(quote(name))
+  || ' || '', '' || count(*) || '', (SELECT count(*) FROM main.'' || '
+  || quote('\"' || replace(name, '\"', '\"\"') || '\"')
+  || ' || ''));'' FROM main.' || '\"' || replace(name, '\"', '\"\"') || '\"' || ';'
+  FROM $SQL_TABLES ORDER BY name;"
+
+cmd_backup() {
+  [ "$#" -eq 0 ] || usage
+  require_volume
+  lock_backup
+  restic_setup
+  [ -f "$DB" ] || fail "$E_FAIL" "there is no database at $DB yet"
+  local trailer rc=0
+  trailer=$(sqlite3 -bail -readonly "$DB" ".timeout 60000" "$SQL_TRAILER_GENERATOR") || fail "$E_FAIL" "cannot read the table list of $DB"
+  [ -n "$trailer" ] || fail "$E_FAIL" "$DB has no tables"
+  log "backing up $DB"
+  /usr/local/bin/restic backup --host "$BACKUP_HOST" --tag "$BACKUP_TAG" \
+    --stdin-filename "$DUMP_NAME" --stdin-from-command -- \
+    sqlite3 -bail -readonly "$DB" ".timeout 60000" "BEGIN;" "$SQL_PAGE_SIZE" ".dump" \
+    "$SQL_CHECK_TABLE" "$trailer" "$SQL_CHECK_REPORT" "COMMIT;" || rc=$?
+  [ "$rc" -eq 0 ] || fail "$E_FAIL" "restic backup failed (status $rc)"
+  rc=0
+  /usr/local/bin/restic forget --host "$BACKUP_HOST" --tag "$BACKUP_TAG" --keep-daily 30 --prune || rc=$?
+  [ "$rc" -eq 0 ] || fail "$E_RETENTION" "the backup was saved, but applying retention failed (restic status $rc)"
+  log "backup complete"
+}
+
+cmd_restore() {
+  [ "$#" -eq 1 ] || usage
+  local snapshot=$1
+  [[ $snapshot =~ ^(latest|[0-9a-f]{8,64})$ ]] || fail "$E_USAGE" "the snapshot must be 'latest' or a restic snapshot id"
+  require_volume
+  lock_volume
+  lock_backup
+  restic_setup
+  local stamp new out status tables checked integrity previous=""
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  new=$STALWART_DIR/restore-$stamp.sqlite
+  out=$VOLUME_TMP/restore-$stamp.out
+  [ ! -e "$new" ] || fail "$E_FAIL" "$new already exists"
+  log "restoring snapshot $snapshot into a new database"
+  set +e
+  /usr/local/bin/restic dump --host "$BACKUP_HOST" --tag "$BACKUP_TAG" "$snapshot" "/$DUMP_NAME" |
+    sqlite3 --safe -bail "$new" >"$out"
+  status="${PIPESTATUS[*]}"
+  set -e
+  if [ "$status" != "0 0" ]; then
+    rm -f "$new" "$new-journal" "$out"
+    fail "$E_FAIL" "restore failed (restic dump and sqlite3 statuses: $status). The live database was not changed."
+  fi
+  checked=$(sed -n 's/^kasten-restore-check \([0-9][0-9]*\) tables$/\1/p' "$out")
+  tables=$(sqlite3 -readonly "$new" "SELECT count(*) FROM $SQL_TABLES;")
+  integrity=$(sqlite3 -readonly "$new" "PRAGMA integrity_check;")
+  if [ -z "$checked" ] || [ "$checked" != "$tables" ] || [ "$tables" -eq 0 ] || [ "$integrity" != ok ]; then
+    rm -f "$new" "$out"
+    fail "$E_FAIL" "the restored database failed verification (integrity: ${integrity:0:200}; tables: $tables; row-count checks: ${checked:-none}). The live database was not changed."
+  fi
+  if [ -e "$DB" ]; then
+    previous=$DB.before-restore-$stamp
+    ln "$DB" "$previous"
+    local ext
+    for ext in -wal -shm; do
+      [ ! -e "$DB$ext" ] || mv "$DB$ext" "$previous$ext"
+    done
+  fi
+  sync
+  mv -f "$new" "$DB"
+  sync
+  log "restored snapshot $snapshot: integrity ok, $tables tables, every row count matches the backup"
+  [ -z "$previous" ] || log "the previous database is kept as $previous"
+  printf 'table rows\n'
+  sed -n 's/^kasten-rows //p' "$out"
+  rm -f "$out"
+}
+
+cmd_vacuum() {
+  [ "$#" -eq 0 ] || usage
+  require_volume
+  lock_volume
+  lock_backup
+  [ -f "$DB" ] || fail "$E_FAIL" "there is no database at $DB"
+  export TMPDIR=$VOLUME_TMP SQLITE_TMPDIR=$VOLUME_TMP
+  local before after result
+  before=$(stat -c %s "$DB")
+  result=$(sqlite3 -bail "$DB" "PRAGMA wal_checkpoint(TRUNCATE);")
+  [[ $result == 0\|* ]] || fail "$E_FAIL" "the WAL checkpoint did not complete ($result)"
+  sqlite3 -bail "$DB" "VACUUM;"
+  result=$(sqlite3 -bail "$DB" "PRAGMA wal_checkpoint(TRUNCATE);")
+  [[ $result == 0\|* ]] || fail "$E_FAIL" "the WAL checkpoint after VACUUM did not complete ($result)"
+  after=$(stat -c %s "$DB")
+  log "vacuum complete: $before bytes before, $after bytes after"
+}
+
+export_path() {
+  [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] || fail "$E_USAGE" "export labels use 1-64 letters, digits, _ or -"
+  printf '%s/%s\n' "$UPGRADE_DIR" "$1"
+}
+
+cmd_store_export() {
+  [ "$#" -eq 1 ] || usage
+  require_volume
+  lock_volume
+  [ -f "$DB" ] || fail "$E_FAIL" "there is no database to export"
+  local target rc=0
+  target=$(export_path "$1")
+  install -d -m 0700 "$UPGRADE_DIR"
+  # Atomic admission: never overwrite another export or an earlier interrupted attempt.
+  mkdir -m 0700 "$target" || fail "$E_REFUSED" "the export label is already in use"
+  export TMPDIR=$VOLUME_TMP
+  timeout --kill-after=5 1800 /usr/local/bin/stalwart --config "$CONFIG" --export "$target/data" >"$target/export.log" 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || fail "$E_FAIL" "native export failed (status $rc); protected logs remain under the export label"
+  [ -d "$target/data" ] || fail "$E_FAIL" "native export produced no data directory"
+  (
+    cd "$target/data"
+    # All native files, including newly added subspaces. Nothing is guessed or omitted.
+    find . -type f -print0 | sort -z | xargs -0 -r sha256sum
+  ) >"$target/manifest.sha256.tmp"
+  [ -s "$target/manifest.sha256.tmp" ] || fail "$E_FAIL" "native export produced no files"
+  sync "$target/manifest.sha256.tmp"
+  mv "$target/manifest.sha256.tmp" "$target/manifest.sha256"
+  printf 'complete store exported: %s; includes configuration, mail and metadata\n' "$1"
+}
+
+cmd_store_diff() {
+  [ "$#" -eq 2 ] || usage
+  require_volume
+  local before after
+  before=$(export_path "$1")
+  after=$(export_path "$2")
+  [ -s "$before/manifest.sha256" ] && [ -s "$after/manifest.sha256" ] || fail "$E_REFUSED" "both exports need completed manifests"
+  # Raw values never leave their protected directories. A change exits 1 for explicit review.
+  diff -u --label "$1" --label "$2" "$before/manifest.sha256" "$after/manifest.sha256"
+}
+
+main() {
+  [ "$(id -u)" -ne 0 ] || fail "$E_USAGE" "run as the kasten user, not root"
+  local command=${1:-serve}
+  [ "$#" -eq 0 ] || shift
+  case $command in
+    init) cmd_init "$@" ;;
+    recovery) cmd_recovery "$@" ;;
+    serve) cmd_serve "$@" ;;
+    backup-init) cmd_backup_init "$@" ;;
+    backup) cmd_backup "$@" ;;
+    restore) cmd_restore "$@" ;;
+    vacuum) cmd_vacuum "$@" ;;
+    store-export) cmd_store_export "$@" ;;
+    store-diff) cmd_store_diff "$@" ;;
+    health) cmd_health "$@" ;;
+    version) cmd_version "$@" ;;
+    help | -h | --help) usage 0 ;;
+    *) usage ;;
+  esac
+}
+
+main "$@"

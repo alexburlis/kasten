@@ -1,0 +1,17 @@
+#!/usr/sbin/nft -f
+# Tang host: only the mail VPS may reach Tang's port. Installed as /etc/kasten/kasten-tang.nft and
+# loaded by kasten-tang-firewall.service. This table only drops packets and never accepts, so it
+# cannot open anything. It replaces only itself and leaves Docker's and Tailscale's rules alone.
+# Declaring the table first lets the delete succeed when it does not exist yet. nft -f applies the
+# file as one batch, so the old rules stay until the new ones are in. This works on every nftables
+# version; "destroy table" would need nftables 1.0.7 and Linux 6.3.
+table inet kasten_tang
+delete table inet kasten_tang
+
+table inet kasten_tang {
+	chain input {
+		type filter hook input priority filter - 10; policy accept;
+		tcp dport @PORT@ ip saddr != @VPS_TAILNET_IP@ drop
+		tcp dport @PORT@ meta nfproto ipv6 drop
+	}
+}

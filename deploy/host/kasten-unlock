@@ -1,0 +1,166 @@
+#!/bin/sh
+# kasten-unlock: attach, unlock and mount the encrypted Kasten volume, or lock it again.
+# kasten-unlock.service runs "kasten-unlock start" at boot.
+#
+#   kasten-unlock start    attach the loop device, unlock through Clevis and Tang, mount
+#   kasten-unlock attach   attach the loop device only and print its path
+#   kasten-unlock stop     unmount, close and detach
+#
+# "start" is idempotent. It never creates or formats a volume: if the volume file is missing or
+# Tang does not answer in time, it fails and leaves /var/lib/kasten unmounted. A start that
+# unlocks the volume but cannot mount it locks the volume again. Exit status 6 means that trying
+# again cannot help: no volume file, no Tang binding, or another file system on the mount point.
+# kasten-unlock.service retries every other failure. Each unlock and lock writes one "event=" line
+# to the journal with the tag kasten-unlock, for monitoring.
+set -eu
+
+LUKS_FILE=/var/lib/kasten.luks
+MNT=/var/lib/kasten
+KASTEN_DM_NAME=kasten
+KASTEN_UNLOCK_TIMEOUT=300
+# shellcheck source=deploy/host/host.env
+[ ! -r /etc/kasten/host.env ] || . /etc/kasten/host.env
+DM=$KASTEN_DM_NAME
+
+say() { printf 'kasten-unlock: %s\n' "$*" >&2; }
+
+# event <syslog priority> <fields>: one machine-readable line in the journal.
+event() {
+  prio=$1
+  shift
+  logger -t kasten-unlock -p "daemon.$prio" -- "event=$*" 2>/dev/null || say "event=$*"
+  [ ! -t 2 ] || say "event=$*"
+  case $* in unlock\ *)
+    result=failed
+    event_method=existing
+    case " $* " in *" result=ok "*) result=ok ;; esac
+    case " $* " in *" method=tang "*) event_method=tang ;; *" method=passphrase "*) event_method=passphrase ;; esac
+    if ! /bin/sh "$(dirname "$0")/kasten-unlock-event" "$result" "$event_method"; then
+      say "unlock event could not reach monitoring; review the journal and Kuma"
+      logger -t kasten-unlock -p daemon.err -- "event=monitoring result=failed" 2>/dev/null || true
+    fi
+    ;;
+  esac
+}
+
+attach() {
+  if [ ! -f "$LUKS_FILE" ]; then
+    say "$LUKS_FILE does not exist. Nothing was created; install.sh creates the volume."
+    exit 6
+  fi
+  dev=$(losetup -n -O NAME -j "$LUKS_FILE" | head -n 1)
+  [ -n "$dev" ] || dev=$(losetup --find --show --direct-io=on "$LUKS_FILE")
+  printf '%s\n' "$dev"
+}
+
+dio() { losetup -n -O DIO "$1" | tr -d ' '; }
+
+unlock_tang() {
+  t0=$(date +%s)
+  n=0
+  while :; do
+    n=$((n + 1))
+    # clevis calls curl without a timeout, so each attempt gets one.
+    if err=$(timeout --kill-after=5 30 clevis luks unlock -d "$1" -n "$DM" 2>&1); then
+      method=tang
+      opened=yes
+      break
+    fi
+    # Opened meanwhile, for example by kasten-unlock-passphrase: the method stays "existing".
+    cryptsetup status "$DM" >/dev/null 2>&1 && break
+    elapsed=$(($(date +%s) - t0))
+    if [ "$elapsed" -ge "$KASTEN_UNLOCK_TIMEOUT" ]; then
+      [ -z "$err" ] || say "last error: $err"
+      event err "unlock result=failed method=tang reason=timeout attempts=$n seconds=$elapsed device=$1"
+      say "Tang did not unlock the volume within ${KASTEN_UNLOCK_TIMEOUT}s. Nothing is mounted, so mail stays stopped."
+      say "kasten-unlock.service tries again in a minute, and starts kasten.service after the unlock."
+      say "Check Tailscale and the Tang host, or unlock with the recovery passphrase: kasten-unlock-passphrase"
+      exit 1
+    fi
+    if [ "$n" -eq 1 ]; then
+      [ -z "$err" ] || say "$err"
+      say "waiting for Tang, for up to ${KASTEN_UNLOCK_TIMEOUT}s"
+    fi
+    sleep 5
+  done
+  attempts=$n
+  seconds=$(($(date +%s) - t0))
+}
+
+start() {
+  if mountpoint -q "$MNT"; then
+    src=$(findmnt -n -o SOURCE --mountpoint "$MNT")
+    if [ "$src" != "/dev/mapper/$DM" ]; then
+      say "$MNT is mounted from $src, not from /dev/mapper/$DM. Refusing to continue."
+      exit 6
+    fi
+    say "the volume is already unlocked and mounted"
+    return 0
+  fi
+  dev=$(attach)
+  method=${KASTEN_UNLOCK_METHOD:-existing}
+  attempts=0
+  seconds=0
+  opened=no
+  if ! cryptsetup status "$DM" >/dev/null 2>&1; then
+    case $(clevis luks list -d "$dev" 2>/dev/null || true) in
+      *tang*) ;;
+      *)
+        event err "unlock result=failed method=tang reason=not-bound device=$dev"
+        say "the volume has no Tang binding. Bind it with bind-tang.sh, or run kasten-unlock-passphrase."
+        exit 6
+        ;;
+    esac
+    unlock_tang "$dev"
+  fi
+  # While this start waited for Tang, kasten-unlock-passphrase may have opened and mounted the
+  # volume. The kernel would stack a second mount of it there, and a lock would then unmount
+  # only one of them, so look again first; that unlock reported its own event.
+  if mountpoint -q "$MNT" && [ "$(findmnt -n -o SOURCE --mountpoint "$MNT" | tail -n 1)" = "/dev/mapper/$DM" ]; then
+    say "the volume was unlocked and mounted meanwhile"
+    return 0
+  fi
+  if ! mount -t ext4 -o noatime,nodiscard "/dev/mapper/$DM" "$MNT"; then
+    # kasten-unlock-passphrase may have mounted the volume between that look and this mount, and
+    # mount can then refuse it; that unlock reported its own event.
+    if [ "$(findmnt -n -o SOURCE --mountpoint "$MNT")" = "/dev/mapper/$DM" ]; then
+      say "the volume was unlocked and mounted meanwhile"
+      return 0
+    fi
+    event err "unlock result=failed method=$method reason=mount device=$dev"
+    # systemd runs ExecStop only after a start that succeeded, so lock what this start unlocked.
+    # A volume that was open before, for example for a repair by hand, stays open.
+    if [ "$opened" = yes ]; then
+      cryptsetup close "$DM"
+      event notice "lock result=ok reason=mount"
+      say "the volume did not mount, so it is locked again"
+    fi
+    exit 1
+  fi
+  event notice "unlock result=ok method=$method attempts=$attempts seconds=$seconds device=$dev dio=$(dio "$dev")"
+}
+
+stop() {
+  # Every mount, in case two were stacked on the directory: a single umount would leave the
+  # volume in use, and cryptsetup close would fail.
+  while mountpoint -q "$MNT"; do
+    umount "$MNT"
+  done
+  if cryptsetup status "$DM" >/dev/null 2>&1; then
+    cryptsetup close "$DM"
+  fi
+  for loop in $(losetup -n -O NAME -j "$LUKS_FILE"); do
+    losetup -d "$loop"
+  done
+  event notice "lock result=ok"
+}
+
+case ${1:-} in
+  start) start ;;
+  attach) attach ;;
+  stop) stop ;;
+  *)
+    say "usage: kasten-unlock start|attach|stop"
+    exit 2
+    ;;
+esac

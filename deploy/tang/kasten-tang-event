@@ -1,0 +1,14 @@
+#!/bin/sh
+# Called by the existing tangd@ service after each socket activation. Only event metadata goes
+# to an existing Kuma monitor; no request body, advertisement or Tang key is logged or sent.
+set +x
+set -eu
+file=/etc/kasten/tang-push-url
+KASTEN_EVENT_PUSH_STATUS=down
+# Runtime-only non-secret selection; no repository copy contains site settings.
+# shellcheck source=/dev/null
+[ ! -r /etc/kasten/tang-event.env ] || . /etc/kasten/tang-event.env
+[ -e "$file" ] || exit 0
+KASTEN_PUSH_URL_FILE=$file KASTEN_PUSH_STATUS=$KASTEN_EVENT_PUSH_STATUS \
+  KASTEN_PUSH_MESSAGE="Tang access - acknowledge after review" \
+  /bin/sh /usr/local/sbin/kasten-push

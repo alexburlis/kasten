@@ -1,0 +1,25 @@
+#!/bin/sh
+# kasten-mail-run: run one kasten-server command in a new, temporary mail container.
+#
+#   kasten-mail-run init                 create the volume marker; prints the volume id
+#   kasten-mail-run restore latest       with kasten.service stopped
+#   kasten-mail-run vacuum | store-export ... | store-diff ...
+#
+# The container is the mail server's (podman.sh), on the host network, with /opt/kasten/.env. It
+# also gets RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE and KASTEN_BACKUP_ENV_FILE when they are set,
+# for example from /var/lib/kasten/secrets/backup.env. kasten-server's own lock refuses a command
+# while another one, or the running server, uses the volume.
+set -eu
+
+# shellcheck source=deploy/host/podman.sh
+. /usr/local/lib/kasten/podman.sh
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: kasten-mail-run <kasten-server command> [arguments...]" >&2
+  exit 2
+fi
+kasten_images
+tty_arg
+# shellcheck disable=SC2086 # the argument lists are words without spaces
+exec kasten-podman run --rm --interactive $TTY --network=host --env-file="$KASTEN_ENV_FILE" \
+  $RESTIC_ENV $MAIL_ARGS "$SERVER_IMAGE" "$@"

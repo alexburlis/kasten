@@ -1,0 +1,12 @@
+[Unit]
+Description=Test only: loop device nodes, because a container has no devtmpfs
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/kasten-deploytest/devnodes
+
+[Install]
+WantedBy=sysinit.target

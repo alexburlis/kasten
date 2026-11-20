@@ -1,0 +1,3 @@
+# Playwright output: failure screenshots, downloads and the e2e screenshots.
+test-results/
+playwright-report/

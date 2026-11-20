@@ -1,0 +1,20 @@
+#!/bin/sh
+# kasten-mail-exec: run one kasten-server command inside the running mail container, kasten-mail.
+#
+#   kasten-mail-exec backup
+#   set -a; . /var/lib/kasten/secrets/backup.env; set +a; kasten-mail-exec backup-init
+#
+# It passes RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE and KASTEN_BACKUP_ENV_FILE into the container
+# when they are set, and nothing else from the environment.
+set -eu
+
+# shellcheck source=deploy/host/podman.sh
+. /usr/local/lib/kasten/podman.sh
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: kasten-mail-exec <kasten-server command> [arguments...]" >&2
+  exit 2
+fi
+tty_arg
+# shellcheck disable=SC2086 # the argument lists are words without spaces
+exec kasten-podman exec --interactive $TTY $RESTIC_ENV kasten-mail kasten-server "$@"

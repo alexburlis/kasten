@@ -1,0 +1,125 @@
+#!/bin/sh
+# kasten-dev-gpg <command>: GnuPG helper for the dev stack and its tests. Development only.
+# Every command reads and writes files in /io (bind-mount a private directory there) and uses a
+# fresh, temporary GnuPG home, so no key outlives the container.
+#
+#   keygen    in: uid, passphrase (optional)   out: pub.asc, sec.asc (0600), key.info
+#             An OpenPGP v4 key: Ed25519 primary (cert, sign) and a Cv25519 encryption subkey,
+#             neither with an expiry. Without a passphrase file, the secret key is unprotected.
+#   keyinfo   in: keys.asc                     stdout: key.info lines for every key in the file
+#   pkesk     in: msg.asc                      stdout: "pkesk <version> <algo> <keyid>" per
+#             recipient, then "data ..." lines for the encrypted data packet. Needs no secret key.
+#   encrypt   in: recipients.asc, plain.in     out: msg.asc, encrypted to every key in the file
+#   decrypt   in: sec.asc, passphrase (optional), msg.asc   out: plain.out
+#
+# key.info lines:  key <fingerprint> version <n> algo <n> expires <never|unix time>
+#                  encsub <key id> algo <n> expires <never|unix time>
+set -eu
+
+IO=/io
+GNUPGHOME=$(mktemp -d /tmp/gnupg.XXXXXX)
+export GNUPGHOME
+trap 'gpgconf --kill gpg-agent 2>/dev/null || true; rm -rf "$GNUPGHOME"' EXIT
+
+fail() {
+  echo "kasten-dev-gpg: $*" >&2
+  exit 1
+}
+
+need() {
+  for f in "$@"; do
+    [ -s "$IO/$f" ] || fail "missing input $IO/$f"
+  done
+}
+
+# gpgp <args>: gpg in batch mode with the optional passphrase file, never a passphrase argument.
+gpgp() {
+  if [ -s "$IO/passphrase" ]; then
+    gpg --batch --no-tty --quiet --trust-model always --pinentry-mode loopback --passphrase-file "$IO/passphrase" "$@"
+  else
+    gpg --batch --no-tty --quiet --trust-model always --pinentry-mode loopback --passphrase '' "$@"
+  fi
+}
+
+# info <file>: key.info lines for every key in an armored public key file.
+info() {
+  gpg --batch --with-colons --import-options show-only --import "$1" 2>/dev/null | awk -F: '
+    function expiry(v) { return v == "" ? "never" : v }
+    $1 == "pub" { algo = $4; pexp = expiry($7); want = 1; next }
+    $1 == "sub" { subid = $5; subalgo = $4; subexp = expiry($7); subcaps = $12; want = 2; next }
+    $1 == "fpr" && want == 1 {
+      printf "key %s version %d algo %s expires %s\n", $10, length($10) == 40 ? 4 : 5, algo, pexp
+      want = 0
+      next
+    }
+    $1 == "fpr" && want == 2 {
+      if (subcaps ~ /e/) printf "encsub %s algo %s expires %s\n", subid, subalgo, subexp
+      want = 0
+    }'
+}
+
+# fingerprints: the primary key fingerprints in the temporary keyring.
+fingerprints() {
+  gpg --batch --with-colons --list-keys | awk -F: '$1 == "pub" { p = 1; next } $1 == "fpr" && p { print $10; p = 0 }'
+}
+
+cmd=${1:-help}
+case $cmd in
+  keygen)
+    need uid
+    uid=$(cat "$IO/uid")
+    gpgp --quick-gen-key "$uid" ed25519 cert,sign never
+    fpr=$(fingerprints)
+    [ "$(printf '%s\n' "$fpr" | wc -l)" -eq 1 ] || fail "expected one new key"
+    gpgp --quick-add-key "$fpr" cv25519 encr never
+    umask 077
+    gpg --batch --armor --export "$fpr" >"$IO/pub.asc.tmp"
+    gpgp --armor --export-secret-keys "$fpr" >"$IO/sec.asc.tmp"
+    chmod 0600 "$IO/sec.asc.tmp"
+    chmod 0644 "$IO/pub.asc.tmp"
+    info "$IO/pub.asc.tmp" >"$IO/key.info.tmp"
+    chmod 0644 "$IO/key.info.tmp"
+    mv -f "$IO/sec.asc.tmp" "$IO/sec.asc"
+    mv -f "$IO/pub.asc.tmp" "$IO/pub.asc"
+    mv -f "$IO/key.info.tmp" "$IO/key.info"
+    ;;
+  keyinfo)
+    need keys.asc
+    info "$IO/keys.asc"
+    ;;
+  pkesk)
+    need msg.asc
+    # --list-only lists the packets without trying to decrypt.
+    gpg --batch --no-tty --list-only --list-packets "$IO/msg.asc" 2>/dev/null | awk '
+      /^:pubkey enc packet:/ {
+        v = $5; sub(",", "", v); a = $7; sub(",", "", a)
+        printf "pkesk %s %s %s\n", v, a, $9
+      }
+      /^:(encrypted data|aead encrypted) packet:/ { printf "data %s\n", $0 }
+      /mdc_method:/ { printf "data %s\n", $0 }' || true
+    ;;
+  encrypt)
+    need recipients.asc plain.in
+    gpg --batch --no-tty --quiet --import "$IO/recipients.asc" 2>/dev/null
+    set --
+    for fpr in $(fingerprints); do
+      set -- "$@" --recipient "$fpr"
+    done
+    [ "$#" -gt 0 ] || fail "recipients.asc holds no public key"
+    rm -f "$IO/msg.asc"
+    gpg --batch --no-tty --quiet --trust-model always --armor --encrypt "$@" \
+      --output "$IO/msg.asc" "$IO/plain.in"
+    ;;
+  decrypt)
+    need sec.asc msg.asc
+    gpgp --import "$IO/sec.asc" 2>/dev/null
+    rm -f "$IO/plain.out"
+    gpgp --decrypt --output "$IO/plain.out" "$IO/msg.asc"
+    ;;
+  help | -h | --help)
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    fail "unknown command: $cmd (try help)"
+    ;;
+esac

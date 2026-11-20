@@ -1,0 +1,22 @@
+# Optional co-located probe for generic installs; personal deployments use deploy/observer on
+# apps. This unit runs "kasten probe" in a one-shot kasten-cli container. The probe account
+# (config.probe in kasten.json) sends one message to itself, out through SES and back in through
+# the public MX. The container sees /var/lib/kasten/cli read-only as /etc/kasten (kasten.json,
+# the probe's password file, the Kuma push URL file) and its state directory writable as
+# /etc/kasten/state (probe.json). kasten probe pushes its own result to Kuma when
+# probe.kumaPushUrlFile is set. The unit fails when the message did not arrive.
+# install.sh installs it, but does not enable kasten-probe.timer: see deploy/README.md.
+[Unit]
+Description=Kasten: daily delivery probe
+Requisite=kasten.service
+After=kasten.service kasten-backup.service kasten-check.service
+
+[Service]
+Type=oneshot
+# Rootless Podman moves itself out of this unit's cgroup, and journald then files the
+# container's output under user@2600.service, so "journalctl -u" misses it. Read it with
+# "journalctl -t kasten-probe": the lines keep this identifier.
+SyslogIdentifier=kasten-probe
+ExecStart=/usr/local/sbin/kasten-cli probe --config /etc/kasten/kasten.json
+# kasten probe waits up to 10 minutes for its message.
+TimeoutStartSec=20min

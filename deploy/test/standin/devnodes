@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+i=0
+while [ "$i" -lt 64 ]; do
+  [ -e "/dev/loop$i" ] || mknod -m 0660 "/dev/loop$i" b 7 "$i"
+  i=$((i + 1))
+done

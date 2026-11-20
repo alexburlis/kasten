@@ -1,0 +1,85 @@
+#!/bin/sh
+# kasten-bootstrap: the first configuration of a new mail server, without any network.
+#
+#   kasten-bootstrap
+#
+# Run it once as root, after "kasten-mail-run init" and after /var/lib/kasten/cli holds
+# kasten.json and the files it names, owned by kasten. It starts Stalwart in recovery mode in a
+# container that has no network at all (kasten-recovery), runs "kasten setup --bootstrap" in a CLI
+# container inside that container's network namespace, and then removes recovery mode.
+#
+# Stalwart's first start inserts its web admin UI and tries to download it, and its first normal
+# start would download ASN/GeoIP data. The spam rules bring four remote lists (x:HttpLookup:
+# OpenPhish, PhishTank, disposable and free mail domains), which Stalwart would fetch at their
+# first lookup. Without a network the first download cannot happen, and bootstrap stores all of
+# them as disabled, so the first normal start downloads nothing either.
+#
+# Until a first boot has finished, /var/lib/kasten/.kasten-bootstrap-incomplete exists, and
+# neither kasten.service nor kasten-unlock-passphrase starts Stalwart.
+set -eu
+
+# shellcheck source=deploy/host/podman.sh
+. /usr/local/lib/kasten/podman.sh
+
+KASTEN_UID=2600
+HOST_ENV=/etc/kasten/host.env
+CLI_DIR=/var/lib/kasten/cli
+RECOVERY_ADMIN=/var/lib/kasten/data/secrets/recovery-admin
+DATABASE=/var/lib/kasten/data/stalwart/stalwart.sqlite
+UNFINISHED=/var/lib/kasten/.kasten-bootstrap-incomplete
+COPY=$CLI_DIR/recovery-admin
+
+die() {
+  printf 'kasten-bootstrap: %s\n' "$*" >&2
+  exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || die "run as root"
+KASTEN_MAIL_UID=
+# shellcheck source=deploy/host/host.env
+[ ! -r "$HOST_ENV" ] || . "$HOST_ENV"
+case $KASTEN_MAIL_UID in '' | *[!0-9]*) die "KASTEN_MAIL_UID is not set in $HOST_ENV; run install.sh" ;; esac
+# The caller's directory may be closed to the users that copy the recovery login, for example /root.
+cd /
+mountpoint -q /var/lib/kasten || die "the encrypted volume is not mounted; run: kasten-unlock-passphrase"
+[ -f "$CLI_DIR/kasten.json" ] || die "$CLI_DIR/kasten.json is missing"
+[ -f "$RECOVERY_ADMIN" ] || die "$RECOVERY_ADMIN is missing; run: kasten-mail-run init"
+if systemctl is-active -q kasten.service; then
+  die "kasten.service is running; bootstrap runs only before the first normal start"
+fi
+kasten_images || exit 1
+volume_id=$(sed -n 's/^KASTEN_VOLUME_ID=//p' "$KASTEN_ENV_FILE" | tail -n 1)
+
+# The CLI container's root is the kasten user, so it cannot read the recovery login, which belongs
+# to the server's user. A copy for kasten, next to kasten.json, lives for this run. --depend also
+# removes a CLI container that still shares the recovery container's network.
+trap 'rm -f "$COPY"; kasten-podman rm --force --ignore --depend --time=30 kasten-recovery >/dev/null 2>&1 || true' EXIT
+# Not every shell runs the EXIT trap when a signal ends it (dash does not): a dropped SSH session
+# or Ctrl-C would leave the copy and the recovery container, which holds the volume lock.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# The server's user reads its file, and kasten writes the copy. data/ and cli/ belong to these
+# users, so root would follow a link that one of them left there: it would copy any file for kasten
+# to read, or write over any file. Each user's own access reaches only that user's files.
+# shellcheck disable=SC2016 # kasten's shell expands $1
+env -i PATH=/usr/sbin:/usr/bin setpriv --reuid="$KASTEN_MAIL_UID" --regid="$KASTEN_MAIL_UID" --clear-groups \
+  cat "$RECOVERY_ADMIN" |
+  env -i PATH=/usr/sbin:/usr/bin setpriv --reuid="$KASTEN_UID" --regid="$KASTEN_UID" --init-groups \
+    sh -c 'umask 077 && cat >"$1" && test -s "$1"' sh "$COPY" ||
+  die "could not copy $RECOVERY_ADMIN for the kasten user"
+# A first boot has no database yet. Recovery mode creates it, so until setup has finished, the
+# database alone would look like a configured server. A later run, such as an admin API key
+# rotation, finds the database and keeps no marker.
+[ -f "$DATABASE" ] || install -m 0644 -o root -g root /dev/null "$UNFINISHED"
+# shellcheck disable=SC2086 # the argument lists are words without spaces
+kasten-podman run --detach --name kasten-recovery --network=none --env=KASTEN_VOLUME_ID="$volume_id" \
+  $MAIL_ARGS "$SERVER_IMAGE" recovery >/dev/null
+wait_healthy kasten-recovery 300 || die "recovery mode did not become healthy; its log: journalctl CONTAINER_NAME=kasten-recovery"
+# Writable: bootstrap writes the admin API key next to kasten.json.
+# shellcheck disable=SC2086 # the argument list is words without spaces
+kasten-podman run --rm --network=container:kasten-recovery $CLI_ARGS --volume="$CLI_DIR:/etc/kasten:Z" \
+  "$CLI_IMAGE" setup --config /etc/kasten/kasten.json --bootstrap \
+  --recovery-admin-file /etc/kasten/recovery-admin --url http://127.0.0.1:8080
+rm -f "$UNFINISHED"
+echo "kasten-bootstrap: done. Next: systemctl start kasten.service, then kasten-cli setup" >&2

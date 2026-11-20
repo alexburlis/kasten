@@ -1,0 +1,30 @@
+# Development additions to compose.yaml. ./kasten applies this file to every dev stack.
+# The outbox (Mailpit, the SES stand-in) relays mail for the probe account to Stalwart's inbound
+# SMTP on mail:25, as SES and the public MX would in production, so `kasten probe` can follow its
+# message all the way round. Every other message stays in the outbox. The relay settings are in
+# .kasten-dev/outbox/relay.yaml, which ./kasten dev up writes. The command repeats compose.yaml's,
+# because Compose replaces a command as a whole. Mailpit greets with its host name, and Stalwart
+# refuses an EHLO that is not a domain name, such as a container id, so the outbox gets one.
+services:
+  outbox:
+    hostname: outbox.example.test
+    command: !override
+      - --smtp=0.0.0.0:587
+      - --smtp-tls-cert=/etc/outbox/outbox.crt
+      - --smtp-tls-key=/etc/outbox/outbox.key
+      - --smtp-require-starttls
+      - --smtp-auth-file=/etc/outbox/smtp-auth
+      - --smtp-disable-rdns
+      - --listen=0.0.0.0:8025
+      - --allowed-hosts=localhost:${KASTEN_DEV_PORT_OUTBOX:-7482},127.0.0.1:${KASTEN_DEV_PORT_OUTBOX:-7482},localhost:8025
+      - --block-remote-css-and-fonts
+      - --disable-version-check
+      - --smtp-relay-config=/etc/outbox/relay.yaml
+      - --smtp-relay-matching=^probe@kasten\.test$$
+    volumes:
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}/outbox/relay.yaml
+        target: /etc/outbox/relay.yaml
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,0 +1,169 @@
+# Kasten local development stack. Every published port binds 127.0.0.1 only.
+# ./kasten dev up drives it (see dev/README.md). Before the first start it needs, in .kasten-dev/
+# (or $KASTEN_DEV_DIR):
+#   outbox/       from dev/outbox/make-dev-ca.sh (dev CA, outbox certificate, outbox SMTP login)
+#   mail.env      KASTEN_VOLUME_ID=<the volumeId printed by "docker compose run --rm mail init">
+# The "cli" and "gpg" services are tools: they have the "tools" profile, so "up" never starts them,
+# and "./kasten" runs them with "docker compose run". The "web" service serves the app on port 7480.
+name: kasten-dev
+
+services:
+  # Stalwart, Unbound and the maintenance commands (kasten-server init, recovery, backup, ...).
+  mail:
+    build:
+      context: server
+    image: kasten-server:dev
+    env_file:
+      - path: ${KASTEN_DEV_DIR:-.kasten-dev}/mail.env
+        required: false
+    environment:
+      # Development only; production sets neither. Trust the dev CA for the relay to "outbox".
+      # Resolve "outbox" and, because many networks block direct DNS, every other name through
+      # Docker's DNS instead of recursing from the root.
+      KASTEN_EXTRA_CA_FILE: /etc/kasten-dev/ca.crt
+      KASTEN_DEV_DNS_FORWARD: outbox .
+      # The MX name, and the base of the OAuth issuer and every JMAP session URL.
+      STALWART_HOSTNAME: mx.kasten.test
+      STALWART_PUBLIC_URL: http://localhost:7481
+    networks:
+      default:
+      admin:
+    volumes:
+      - kasten-mail:/var/lib/kasten
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}/outbox/ca.crt
+        target: /etc/kasten-dev/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - 127.0.0.1:7481:8080 # HTTP: JMAP, OAuth, management API
+      - 127.0.0.1:7425:25 # inbound SMTP
+      - 127.0.0.1:7414:143 # IMAP, for import only
+    # Like the 1 GB VPS: 963 MiB of memory and no swap.
+    mem_limit: 963m
+    memswap_limit: 963m
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  # Stand-in for Amazon SES: Mailpit catches all outgoing mail. Its SMTP port (587) is reachable
+  # only on the compose network, needs STARTTLS with the dev CA's certificate for "outbox", and
+  # needs SMTP AUTH. Its web UI is at http://localhost:7482.
+  outbox:
+    image: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
+    command:
+      - --smtp=0.0.0.0:587
+      - --smtp-tls-cert=/etc/outbox/outbox.crt
+      - --smtp-tls-key=/etc/outbox/outbox.key
+      - --smtp-require-starttls
+      - --smtp-auth-file=/etc/outbox/smtp-auth
+      - --smtp-disable-rdns
+      - --listen=0.0.0.0:8025
+      - --allowed-hosts=localhost:7482,127.0.0.1:7482,localhost:8025
+      - --block-remote-css-and-fonts
+      - --disable-version-check
+    volumes:
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}/outbox/outbox.crt
+        target: /etc/outbox/outbox.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}/outbox/outbox.key
+        target: /etc/outbox/outbox.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}/outbox/smtp-auth
+        target: /etc/outbox/smtp-auth
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - 127.0.0.1:7482:8025 # web UI
+    restart: unless-stopped
+
+  # The web app: static files behind an unprivileged nginx (web/Dockerfile). At start it writes the
+  # CSP and the other response headers from KASTEN_API_URL; in dev it serves the config.json that
+  # ./kasten dev up writes (production writes it from the environment, see web/README.md).
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    image: kasten-web:dev
+    environment:
+      KASTEN_API_URL: http://localhost:7481
+    volumes:
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}/web/config.json
+        target: /etc/kasten-web/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - 127.0.0.1:7480:8080 # the web app
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  # The kasten CLI image. It reaches Stalwart's admin API only over the internal "admin" network,
+  # whose addresses the admin API key allows. It runs as your user (./kasten sets KASTEN_UID and
+  # KASTEN_GID), so it can read the 0600 files in .kasten-dev/, which it sees read-only.
+  cli:
+    build:
+      context: .
+      dockerfile: cli/Dockerfile
+    image: kasten-cli:dev
+    profiles: [tools]
+    user: ${KASTEN_UID:-1000}:${KASTEN_GID:-1000}
+    working_dir: /kasten-dev
+    volumes:
+      - type: bind
+        source: ${KASTEN_DEV_DIR:-.kasten-dev}
+        target: /kasten-dev
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [admin]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  # GnuPG for the dev operator key and the integration tests. Development only; no network.
+  gpg:
+    build:
+      context: dev/gpg
+    image: kasten-dev-gpg:dev
+    profiles: [tools]
+    user: ${KASTEN_UID:-1000}:${KASTEN_GID:-1000}
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+# Fixed subnets, because the admin API key allows only the "admin" network and the gateway of the
+# default network (the published port 127.0.0.1:7481, which plays the SSH tunnel's part). A
+# container on the default network has neither address, so the key is refused there.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.74.80.0/24
+          gateway: 10.74.80.1
+  admin:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.74.81.0/28
+          gateway: 10.74.81.1
+
+volumes:
+  kasten-mail:

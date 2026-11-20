@@ -1,0 +1,220 @@
+#!/bin/sh
+# kasten-web-start: writes nginx's server block, the response headers, /config.json and the served
+# /sw.js from the environment, then runs nginx in the foreground.
+#
+#   KASTEN_API_URL             required; the mail API's origin, for example https://mail.example.com.
+#                              connect-src in the CSP is 'self' plus this origin.
+#   KASTEN_WEB_CONFIG_FILE     a ready config.json to serve (default /etc/kasten-web/config.json).
+#                              Development mounts one there. When it is absent, the file is written
+#                              from these variables:
+#   KASTEN_OAUTH_CLIENT_ID     required without a mounted file; the OAuth client ID.
+#   KASTEN_OPERATOR_KEYS_FILE  optional; armored public keys added to every user's key bundle.
+#   KASTEN_APP_NAME            optional; the app's name (default Kasten).
+set -eu
+
+OUT=/tmp/kasten-web
+ROOT=/usr/share/kasten-web
+
+fail() {
+  printf 'kasten-web: %s\n' "$*" >&2
+  exit 2
+}
+
+# The JSON string form of stdin: backslashes, quotes and tabs escaped, CR dropped, lines joined with \n.
+# It prints each character instead of using gsub, because a gsub replacement reads "\\\\" as one
+# backslash.
+json_string() {
+  awk 'BEGIN { ORS = "" }
+  {
+    if (NR > 1) print "\\n"
+    for (i = 1; i <= length($0); i++) {
+      c = substr($0, i, 1)
+      if (c == "\\") print "\\\\"
+      else if (c == "\"") print "\\\""
+      else if (c == "\t") print "\\t"
+      else if (c != "\r") print c
+    }
+  }'
+}
+
+api=${KASTEN_API_URL:-}
+[ -n "$api" ] || fail "KASTEN_API_URL is not set"
+api=${api%/}
+
+# Only an origin: it goes into a response header and must not carry quotes, spaces or a path.
+printf '%s\n' "$api" | grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$' ||
+  fail "KASTEN_API_URL must be an origin such as https://mail.example.com, not '$api'"
+
+case $api in
+  https://*) ;;
+  http://localhost | http://localhost:* | http://127.0.0.1 | http://127.0.0.1:*) ;;
+  *) fail "KASTEN_API_URL must use https, except for localhost" ;;
+esac
+
+mkdir -p "$OUT"
+
+config=${KASTEN_WEB_CONFIG_FILE:-/etc/kasten-web/config.json}
+
+if [ -f "$config" ]; then
+  served=$config
+  # A different apiUrl in the file would be blocked by the CSP: refuse to start with a mismatch.
+  file_api=$(sed -n 's/.*"apiUrl"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$config" | head -n 1)
+  [ "${file_api%/}" = "$api" ] ||
+    fail "$config has apiUrl '$file_api', but KASTEN_API_URL is '$api'"
+else
+  client=${KASTEN_OAUTH_CLIENT_ID:-}
+  printf '%s\n' "$client" | grep -Eq '^[A-Za-z0-9._-]+$' ||
+    fail "KASTEN_OAUTH_CLIENT_ID must be set to the OAuth client ID (letters, digits, . _ -)"
+
+  name=${KASTEN_APP_NAME:-Kasten}
+  printf '%s' "$name" | grep -q '[[:cntrl:]]' && fail "KASTEN_APP_NAME must not contain control characters"
+
+  keys=""
+  keys_file=${KASTEN_OPERATOR_KEYS_FILE:-}
+
+  if [ -n "$keys_file" ]; then
+    [ -r "$keys_file" ] || fail "KASTEN_OPERATOR_KEYS_FILE $keys_file is not readable"
+    grep -q 'PRIVATE KEY' "$keys_file" && fail "$keys_file holds a private key; give public keys only"
+
+    count=$(grep -c '^-----BEGIN PGP PUBLIC KEY BLOCK-----' "$keys_file" || true)
+    [ "$count" -gt 0 ] || fail "$keys_file holds no armored public key"
+
+    index=1
+    while [ "$index" -le "$count" ]; do
+      block=$(awk -v want="$index" '
+        /^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { n += 1; inside = (n == want) }
+        inside { print }
+        /^-----END PGP PUBLIC KEY BLOCK-----/ { if (inside) exit }
+      ' "$keys_file" | json_string)
+      keys="$keys${keys:+, }\"$block\\n\""
+      index=$((index + 1))
+    done
+  fi
+
+  served=$OUT/config.json
+  {
+    printf '{\n'
+    printf '  "apiUrl": "%s",\n' "$api"
+    printf '  "oauthClientId": "%s",\n' "$client"
+    printf '  "operatorKeys": [%s],\n' "$keys"
+    printf '  "appName": "%s"\n' "$(printf '%s' "$name" | json_string)"
+    printf '}\n'
+  } >"$served"
+fi
+
+# frame-src 'self': message HTML is shown in /frame/*.html, same-origin documents with their own
+# policy below. A blob: frame would inherit this policy (see web/README.md, "Message frames").
+csp="default-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'; manifest-src 'self'; connect-src 'self' $api; img-src 'self' blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
+# The message frames: no scripts at all, the mail's inline styles, images from the message itself
+# (data:, blob:), and https images only in the frame for a message whose remote images were shown.
+frame_csp="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+remote_frame_csp="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+
+# X-Robots-Tag keeps every page out of search results: the app is a private sign-in page.
+# Strict-Transport-Security makes browsers use only HTTPS for this name for a year, also when
+# someone types it without https://. Browsers ignore it over plain HTTP, as in local dev.
+cat >"$OUT/headers.conf" <<EOF
+add_header Content-Security-Policy "$csp" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "no-referrer" always;
+add_header Cross-Origin-Opener-Policy "same-origin" always;
+add_header Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(), usb=()" always;
+add_header X-Robots-Tag "noindex, nofollow" always;
+add_header Strict-Transport-Security "max-age=31536000" always;
+EOF
+
+frame_headers() {
+  cat <<EOF
+add_header Content-Security-Policy "$1" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "no-referrer" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+add_header X-Robots-Tag "noindex, nofollow" always;
+add_header Strict-Transport-Security "max-age=31536000" always;
+add_header Cache-Control "no-cache" always;
+EOF
+}
+
+frame_headers "$frame_csp" >"$OUT/frame-headers.conf"
+frame_headers "$remote_frame_csp" >"$OUT/remote-frame-headers.conf"
+
+cat >"$OUT/server.conf" <<EOF
+server {
+  listen 8080;
+  root $ROOT;
+  index index.html;
+  charset utf-8;
+  charset_types text/css application/javascript text/javascript application/json application/manifest+json image/svg+xml text/plain;
+
+  # Always fetched fresh: the page, the service worker, the manifest and the config.
+  location = /config.json {
+    alias $served;
+    default_type application/json;
+    add_header Cache-Control "no-cache" always;
+    include $OUT/headers.conf;
+  }
+
+  location = /index.html {
+    add_header Cache-Control "no-cache" always;
+    include $OUT/headers.conf;
+  }
+
+  location = /sw.js {
+    alias $OUT/sw.js;
+    add_header Cache-Control "no-cache" always;
+    include $OUT/headers.conf;
+  }
+
+  location = /manifest.webmanifest {
+    types { }
+    default_type application/manifest+json;
+    add_header Cache-Control "no-cache" always;
+    include $OUT/headers.conf;
+  }
+
+  # Hashed file names: their content never changes.
+  location /assets/ {
+    try_files \$uri =404;
+    # Not "always": a 404 for a missing asset must not be cached for a year.
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    include $OUT/headers.conf;
+  }
+
+  # The message frames, each with its own policy instead of the app's.
+  location = /frame/message.html {
+    include $OUT/frame-headers.conf;
+  }
+
+  location = /frame/message-remote.html {
+    include $OUT/remote-frame-headers.conf;
+  }
+
+  location /frame/ {
+    return 404;
+  }
+
+  # Every app route (/, /oauth/callback, /mailbox/..., /settings) is the same page.
+  location / {
+    try_files \$uri /index.html;
+    add_header Cache-Control "no-cache" always;
+    include $OUT/headers.conf;
+  }
+}
+EOF
+
+# The service worker serves the page and the message frames from its cache, with the headers they
+# had when it installed. So /sw.js must change whenever those headers do, or installed apps would
+# keep an old CSP, for example the old API origin in connect-src. The served copy is the built
+# worker plus one comment line with a digest of the configuration that sets every header. When that
+# changes, browsers install the new worker, which caches the page and the frames again.
+headers_id=$(sha256sum /etc/nginx/nginx.conf "$OUT/server.conf" "$OUT/headers.conf" \
+  "$OUT/frame-headers.conf" "$OUT/remote-frame-headers.conf")
+headers_id=$(printf '%s\n' "$headers_id" | sha256sum)
+{
+  cat "$ROOT/sw.js"
+  printf '\n// kasten-web headers %s\n' "${headers_id%% *}"
+} >"$OUT/sw.js"
+
+nginx -t -q
+exec nginx -g 'daemon off;'

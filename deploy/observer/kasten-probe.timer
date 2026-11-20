@@ -1,0 +1,10 @@
+[Unit]
+Description=Kasten: daily independent delivery probe
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

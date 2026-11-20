@@ -1,0 +1,33 @@
+# Runs the mail server's container, kasten-mail, with rootless Podman as the kasten user:
+# kasten-mail-service with the arguments in /usr/local/lib/kasten/podman.sh. It starts only on top
+# of the unlocked volume: kasten-unlock.service must succeed and /var/lib/kasten must be a mount
+# point. It also starts only after the first boot: before kasten-bootstrap has created Stalwart's
+# database and finished, a start would be Stalwart's first normal start with a network, which
+# downloads. A restore brings the database too. kasten-unlock-passphrase checks the same paths.
+[Unit]
+Description=Kasten: mail server (rootless Podman, user kasten)
+# The kasten user's manager holds the containers' cgroups and the session bus that Podman uses.
+# Ordered after it, this unit stops first at a shutdown, while Podman still works.
+Requires=kasten-unlock.service user@2600.service
+After=kasten-unlock.service var-lib-kasten.mount user@2600.service
+# Restarting the user manager restarts this unit too.
+PartOf=user@2600.service
+AssertPathIsMountPoint=/var/lib/kasten
+AssertPathExists=/var/lib/kasten/data/stalwart/stalwart.sqlite
+AssertPathExists=!/var/lib/kasten/.kasten-bootstrap-incomplete
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/kasten-mail-service start
+ExecStart=/usr/local/sbin/kasten-mail-service wait
+# An explicit stop and removal, so Podman's restart policy does not start the container again.
+# ExecStopPost= rather than ExecStop=: it also runs after a start that failed or was cancelled, for
+# example by a lock while the start still waited for the health check. A container left running
+# would keep the volume busy, and the lock could not close it.
+ExecStopPost=/usr/local/sbin/kasten-mail-service stop
+TimeoutStartSec=5min
+TimeoutStopSec=2min
+
+[Install]
+WantedBy=multi-user.target

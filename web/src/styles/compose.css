@@ -1,0 +1,413 @@
+/* The compose sheet (web/DESIGN.md, Compose): a raised sheet docked bottom right, centred when
+   maximised, full screen on phones. Fields are ruled lines, not boxes. */
+
+.compose {
+  position: fixed;
+  right: 24px;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  height: 600px;
+  max-height: calc(100dvh - 48px);
+  border-radius: 10px 10px 0 0;
+  background: var(--raised);
+  box-shadow: var(--shadow-sheet);
+  color: var(--text);
+  transform-origin: 85% 100%;
+  transition:
+    opacity var(--t-sheet) var(--ease-paper),
+    transform var(--t-sheet) var(--ease-paper);
+}
+
+/* Progressive enhancement: without @starting-style the sheet simply appears in place. */
+@starting-style {
+  .compose {
+    opacity: 0;
+    transform: translateY(24px) scale(0.985);
+  }
+}
+
+.compose.maximised {
+  inset: 4vh max(5vw, calc((100vw - 860px) / 2));
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border-radius: 12px;
+}
+
+/* --- head ------------------------------------------------------------------------------------ */
+
+.compose-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 46px;
+  padding: 0 10px 0 20px;
+}
+
+.compose-head h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: 400 15.5px/1.2 var(--serif);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- the form: ruled rows, the body, attachments, the footer ----------------------------------- */
+
+/* The form scrolls as a whole when Cc, Bcc, attachments and errors outgrow the sheet; the footer
+   stays pinned so Send is always in reach. */
+.compose-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.compose-row {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  margin: 0 20px;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* The rule under the field being typed in turns ink blue, so focus shows without a box. */
+.compose-row:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.compose-label {
+  flex: none;
+  width: 56px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 43px;
+}
+
+.compose-row > input,
+.compose-row > select {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  height: 43px;
+  padding: 0;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.compose-row > input {
+  font: 400 15.5px/1 var(--serif);
+}
+
+/* From keeps the caret app.css draws, at the row's right edge. */
+.compose-row > select {
+  padding-right: 24px;
+  background-position:
+    right 5px center,
+    right 0 center;
+  font-size: 14px;
+}
+
+.cc-toggle {
+  flex: none;
+  height: 43px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+@media (hover: hover) {
+  .cc-toggle:hover {
+    color: var(--text);
+  }
+}
+
+/* --- addresses: the label, the chips with the typed text, suggestions and the error ------------ */
+
+.address-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0 8px;
+  min-width: 0;
+}
+
+.chips {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 43px;
+  padding: 8px 0;
+  cursor: text;
+}
+
+.chip.address {
+  cursor: default;
+}
+
+/* The input takes whatever the chips leave on their line, down to a caret's width, so two recipients
+   in the docked sheet keep the To row on one line. Clicking anywhere in .chips focuses it. Where
+   field-sizing works, typed text that outgrows the space moves the input to a line of its own
+   instead of scrolling inside a sliver. */
+.chips input {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 3ch;
+  height: 26px;
+  padding: 0;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: none;
+  outline: none;
+  font-size: 14px;
+}
+
+@supports (field-sizing: content) {
+  .chips input {
+    flex: 1 1 auto;
+    field-sizing: content;
+  }
+}
+
+/* An error under the chips lines up with them, past the label column. */
+.address-field > .field-error {
+  flex-basis: 100%;
+  margin: -2px 0 8px 64px;
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 64px;
+  z-index: 2;
+  display: grid;
+  width: min(360px, calc(100% - 64px));
+  max-height: 248px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  border-radius: 9px;
+  background: var(--raised);
+  box-shadow: var(--shadow-sheet);
+  list-style: none;
+}
+
+.suggestions li {
+  display: grid;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .suggestions li:hover {
+    background: var(--hover);
+  }
+}
+
+.suggestions li.active {
+  background: var(--surface-2);
+}
+
+.suggestion-name,
+.suggestion-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-name {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.suggestion-email {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+/* --- body and attachments ---------------------------------------------------------------------- */
+
+/* Plain text in the letter's serif; the quoted original is part of the text, so it shares the
+   colour. */
+.compose-body {
+  flex: 1 0 auto;
+  width: auto;
+  min-height: 160px;
+  height: auto;
+  margin: 0 20px;
+  padding: 16px 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: var(--text);
+  font: 400 16px/1.6 var(--serif);
+  white-space: pre-wrap;
+  resize: none;
+}
+
+.compose-attachments {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 20px 10px;
+  list-style: none;
+}
+
+.compose-form > .field-error,
+.compose-form > .field-hint {
+  flex: none;
+  margin: 0 20px 10px;
+}
+
+/* --- footer ------------------------------------------------------------------------------------ */
+
+.compose-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 60px;
+  margin-top: auto;
+  padding: 0 12px 0 20px;
+  border-top: 1px solid var(--rule);
+  background: var(--raised);
+}
+
+.compose-footer .button.primary {
+  padding: 0 12px 0 16px;
+}
+
+/* --- phones: full screen, in place at frame 0 ---------------------------------------------------- */
+
+@media (max-width: 719px) {
+  /* Opacity only: the sheet must measure the viewport from its first frame. iOS leaves the layout
+     viewport behind the on-screen keyboard, so Compose.tsx sets --vv-top and --vv-height from the
+     visual viewport and the footer with Send rides on top of the keyboard. */
+  .compose,
+  .compose.maximised {
+    inset: var(--vv-top, 0px) 0 auto;
+    width: auto;
+    max-width: none;
+    height: var(--vv-height, 100%);
+    max-height: none;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
+    border-radius: 0;
+    box-shadow: none;
+    transition: opacity 160ms linear;
+  }
+
+  /* With the keyboard up, the keyboard covers the home indicator. */
+  .compose[data-keyboard] {
+    padding-bottom: 0;
+  }
+
+  @starting-style {
+    .compose,
+    .compose.maximised {
+      opacity: 0;
+      transform: none;
+    }
+  }
+
+  .compose-head {
+    height: 52px;
+    padding: 0 4px 0 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .compose-head h2 {
+    font-size: 17px;
+  }
+
+  .compose-head .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .compose-max {
+    display: none;
+  }
+
+  .compose-row,
+  .compose-body {
+    margin: 0 16px;
+  }
+
+  .compose-label {
+    font-size: 14px;
+  }
+
+  /* 16 px keeps iOS from zooming into a focused field. */
+  .compose-row > input,
+  .compose-row > select,
+  .chips input,
+  .compose-body {
+    font-size: 16px;
+  }
+
+  .compose-attachments {
+    padding: 4px 16px 10px;
+  }
+
+  .compose-form > .field-error,
+  .compose-form > .field-hint {
+    margin: 0 16px 10px;
+  }
+
+  .compose-footer {
+    height: 64px;
+    padding: 0 6px 0 16px;
+  }
+
+  .compose-footer .button.primary {
+    height: 44px;
+    padding: 0 20px 0 18px;
+    font-size: 15px;
+  }
+
+  .compose-footer .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* No hardware keyboard to hint at. */
+  .compose-footer kbd {
+    display: none;
+  }
+}
+
+/* Reduced motion: no rise, only a short fade. Restated !important in this layer, which beats the
+   unlayered reduced-motion rule in app.css. */
+@media (prefers-reduced-motion: reduce) {
+  .compose {
+    transform: none !important;
+    transition: opacity 120ms linear !important;
+  }
+}

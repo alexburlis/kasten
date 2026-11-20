@@ -1,0 +1,698 @@
+#!/bin/sh
+# ./kasten: the repository wrapper.
+#   ./kasten dev <command>   runs the local dev stack with Docker Compose (see dev/README.md)
+#   ./kasten <command>       runs the kasten CLI image against that stack
+# Environment: DOCKER_CONTEXT picks the Docker engine. KASTEN_COMPOSE names a Compose v2 binary
+# when "docker compose" is not installed. KASTEN_DEV_DIR moves .kasten-dev/.
+# A second, isolated stack (for tests) sets KASTEN_DEV_PROJECT (another Compose project name),
+# KASTEN_DEV_PORT_BASE (five ports from there: web, mail API, SMTP, IMAP, outbox UI) and
+# KASTEN_DEV_NET (the second octet of its subnets, default 74), and uses its own KASTEN_DEV_DIR.
+# Unset, they give the normal stack: kasten-dev on ports 7480-7482, 7425 and 7414.
+set -eu
+
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+DEV=${KASTEN_DEV_DIR:-$ROOT/.kasten-dev}
+case $DEV in /*) ;; *) DEV=$(pwd)/$DEV ;; esac
+KASTEN_DEV_DIR=$DEV
+KASTEN_UID=$(id -u)
+KASTEN_GID=$(id -g)
+export KASTEN_DEV_DIR KASTEN_UID KASTEN_GID
+
+PROJECT=${KASTEN_DEV_PROJECT:-kasten-dev}
+case $PROJECT in
+  kasten-dev) ISOLATED=false ;;
+  *[!a-z0-9-]* | -* | '') printf 'kasten: KASTEN_DEV_PROJECT must be lower-case letters, digits and dashes\n' >&2 && exit 1 ;;
+  *) ISOLATED=true ;;
+esac
+NET=${KASTEN_DEV_NET:-74}
+if [ -n "${KASTEN_DEV_PORT_BASE:-}" ]; then
+  case $KASTEN_DEV_PORT_BASE in *[!0-9]* | '') printf 'kasten: KASTEN_DEV_PORT_BASE must be a number\n' >&2 && exit 1 ;; esac
+  PORT_WEB=$KASTEN_DEV_PORT_BASE
+  PORT_API=$((KASTEN_DEV_PORT_BASE + 1))
+  PORT_SMTP=$((KASTEN_DEV_PORT_BASE + 2))
+  PORT_IMAP=$((KASTEN_DEV_PORT_BASE + 3))
+  PORT_OUTBOX=$((KASTEN_DEV_PORT_BASE + 4))
+  ISOLATED=true
+else
+  PORT_WEB=7480 PORT_API=7481 PORT_SMTP=7425 PORT_IMAP=7414 PORT_OUTBOX=7482
+fi
+case $NET in *[!0-9]* | '') printf 'kasten: KASTEN_DEV_NET must be a number\n' >&2 && exit 1 ;; esac
+[ "$NET" = 74 ] || ISOLATED=true
+if [ "$ISOLATED" = true ] && { [ "$PROJECT" = kasten-dev ] || [ -z "${KASTEN_DEV_PORT_BASE:-}" ] || [ "$NET" = 74 ]; }; then
+  printf 'kasten: an isolated stack needs all of KASTEN_DEV_PROJECT, KASTEN_DEV_PORT_BASE and KASTEN_DEV_NET\n' >&2
+  exit 1
+fi
+# An isolated stack must not share the default .kasten-dev/ with kasten-dev: dev up rewrites its
+# kasten.json and web/config.json before anything else can fail.
+if [ "$ISOLATED" = true ] && [ "$DEV" = "$ROOT/.kasten-dev" ]; then
+  printf 'kasten: an isolated stack needs its own KASTEN_DEV_DIR\n' >&2
+  exit 1
+fi
+KASTEN_DEV_PORT_WEB=$PORT_WEB KASTEN_DEV_PORT_API=$PORT_API KASTEN_DEV_PORT_SMTP=$PORT_SMTP
+KASTEN_DEV_PORT_IMAP=$PORT_IMAP KASTEN_DEV_PORT_OUTBOX=$PORT_OUTBOX KASTEN_DEV_NET=$NET
+KASTEN_DEV_IMAGE_TAG=$([ "$ISOLATED" = true ] && echo "$PROJECT" || echo dev)
+export KASTEN_DEV_PORT_WEB KASTEN_DEV_PORT_API KASTEN_DEV_PORT_SMTP KASTEN_DEV_PORT_IMAP
+export KASTEN_DEV_PORT_OUTBOX KASTEN_DEV_NET KASTEN_DEV_IMAGE_TAG
+
+readonly API_URL="http://localhost:$PORT_API"
+readonly WEB_ORIGIN="http://localhost:$PORT_WEB"
+readonly OUTBOX_URL="http://localhost:$PORT_OUTBOX"
+readonly CLIENT_ID=kasten-web
+readonly REDIRECT_URI="$WEB_ORIGIN/oauth/callback"
+readonly SCOPE="openid offline_access urn:ietf:params:oauth:scope:mail"
+readonly DOMAIN=kasten.test
+readonly ADMIN_ACCOUNT=kasten-admin
+readonly CLI_API_URL=http://mail:8080
+readonly RECOVERY="$PROJECT-recovery"
+readonly MAIL_CONTAINER="$PROJECT-mail-1"
+# The subnets in compose.yaml. The admin API key allows the tools network and the gateway of the
+# default network, which is where requests to the published port 127.0.0.1:7481 come from.
+readonly TOOLS_NETWORK="10.$NET.81.0/28"
+readonly HOST_GATEWAY="10.$NET.80.1"
+# The dedicated probe account of kasten probe, which also makes kasten lock's proof sign-in.
+readonly PROBE=probe@kasten.test
+
+say() { printf '%s\n' "$*"; }
+step() { printf '==> %s\n' "$*"; }
+fail() {
+  printf 'kasten: %s\n' "$*" >&2
+  exit 1
+}
+
+case $DEV in
+  *[\"\\]* | *'
+'*) fail "KASTEN_DEV_DIR must not contain quotes, backslashes or newlines: $DEV" ;;
+esac
+
+usage() {
+  cat <<'EOF'
+usage: ./kasten dev <command>
+       ./kasten <kasten CLI command> [options]
+
+Local dev stack (Docker Compose project kasten-dev; every port on 127.0.0.1):
+  dev up             build the images and start the stack; set it up on the first run
+  dev serve          dev up, then follow the web and mail logs; Ctrl-C or SIGTERM runs dev down
+  dev down           stop the stack and keep its data
+  dev reset [--yes]  delete the dev mailbox volume and .kasten-dev/ (asks first without --yes)
+  dev status         show the containers, their health and the local addresses
+  dev logs [args]    show container logs (docker compose logs args, such as -f mail)
+  dev mail           deliver a few test messages to you@kasten.test over SMTP
+
+Any other command runs the kasten CLI image against the dev stack, with .kasten-dev/ mounted
+read-only at /kasten-dev (also its working directory), and .kasten-dev/state/ and
+.kasten-dev/out/ writable at the same paths. For the commands that take one, the wrapper adds
+--config /kasten-dev/kasten.json. security-check runs from a container on the stack's default
+network, as the internet would reach the server. Examples:
+  ./kasten setup
+  ./kasten check --account you@kasten.test
+  ./kasten read list --account you@kasten.test
+  ./kasten read get <email id> --account you@kasten.test --key /kasten-dev/operator/sec.asc \
+      --passphrase-file /kasten-dev/operator/passphrase
+  ./kasten help
+EOF
+}
+
+# compose <args>: Docker Compose v2 on this repository's compose.yaml, plus dev/stack/compose.dev.yaml
+# (the outbox relays the probe's mail back to Stalwart) and, for an isolated stack,
+# dev/stack/compose.isolated.yaml (its own ports, subnets and image tags).
+compose_bin() {
+  if [ -n "${KASTEN_COMPOSE:-}" ]; then
+    "$KASTEN_COMPOSE" "$@"
+  else
+    docker compose "$@"
+  fi
+}
+
+compose() {
+  if [ "$ISOLATED" = true ]; then
+    # An isolated stack has no web app, so it builds and runs without the web service.
+    if [ "${1:-}" = build ]; then
+      shift
+      services=
+      for service in "$@"; do [ "$service" = web ] || services="$services $service"; done
+      # shellcheck disable=SC2086 # service names are single words
+      set -- build $services
+    fi
+    compose_bin --project-directory "$ROOT" -p "$PROJECT" -f "$ROOT/compose.yaml" \
+      -f "$ROOT/dev/stack/compose.dev.yaml" -f "$ROOT/dev/stack/compose.isolated.yaml" "$@"
+  elif [ "${SERVE:-false}" = true ]; then
+    compose_bin --project-directory "$ROOT" -p "$PROJECT" -f "$ROOT/compose.yaml" \
+      -f "$ROOT/dev/stack/compose.dev.yaml" -f "$ROOT/dev/stack/compose.serve.yaml" "$@"
+  else
+    compose_bin --project-directory "$ROOT" -p "$PROJECT" -f "$ROOT/compose.yaml" \
+      -f "$ROOT/dev/stack/compose.dev.yaml" "$@"
+  fi
+}
+
+need_docker() {
+  command -v docker >/dev/null 2>&1 || fail "Docker is not installed"
+  if [ -z "${KASTEN_COMPOSE:-}" ] && ! docker compose version >/dev/null 2>&1; then
+    if command -v docker-compose >/dev/null 2>&1; then
+      KASTEN_COMPOSE=$(command -v docker-compose)
+    else
+      fail "Docker Compose v2 is missing. Install it (for example: brew install docker-compose), or set KASTEN_COMPOSE to its path."
+    fi
+  fi
+  case $(compose_bin version --short 2>/dev/null || true) in
+    [2-9].* | v[2-9].* | [1-9][0-9].*) ;;
+    *) fail "Docker Compose v2 or later is required" ;;
+  esac
+  docker info >/dev/null 2>&1 || fail "cannot reach the Docker engine (DOCKER_CONTEXT=${DOCKER_CONTEXT:-default}). Is it running?"
+}
+
+# A random password: 20 letters and digits without look-alikes, in groups of five.
+new_password() {
+  LC_ALL=C tr -dc 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789' </dev/urandom |
+    head -c 20 | sed 's/\(.....\)/\1-/g; s/-$//'
+}
+
+random_hex() {
+  od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'
+}
+
+# put <file>: write standard input to <file> atomically, mode 0600.
+put() {
+  (umask 077 && cat >"$1.tmp.$$") && mv -f "$1.tmp.$$" "$1"
+}
+
+# mounted <file>: write standard input to <file>, mode 0644, for a file that a running container
+# bind-mounts. An unchanged file stays as it is, and a changed one is rewritten in place. Replacing
+# it would leave the container with the old file: with Colima, a stale mount that cannot be read.
+mounted() {
+  (umask 022 && cat >"$1.tmp.$$")
+  if [ ! -e "$1" ]; then
+    mv -f "$1.tmp.$$" "$1"
+  elif cmp -s "$1.tmp.$$" "$1"; then
+    rm -f "$1.tmp.$$"
+  else
+    cat "$1.tmp.$$" >"$1" && rm -f "$1.tmp.$$"
+  fi
+}
+
+json_escape() {
+  sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'
+}
+
+mail_running() {
+  [ -n "$(compose ps --status running -q mail 2>/dev/null)" ]
+}
+
+mail_health() {
+  docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$MAIL_CONTAINER" 2>/dev/null || echo absent
+}
+
+# --- dev up -------------------------------------------------------------------------------
+
+ensure_dev_dir() {
+  (umask 077 && mkdir -p "$DEV" "$DEV/operator" "$DEV/web" "$DEV/state" "$DEV/out")
+  chmod 0700 "$DEV" "$DEV/operator" "$DEV/state" "$DEV/out"
+  chmod 0755 "$DEV/web"
+  [ -f "$DEV/.kasten-dev" ] ||
+    say "Kasten local dev state, written by ./kasten dev up. ./kasten dev reset deletes this directory." |
+    put "$DEV/.kasten-dev"
+}
+
+ensure_outbox() {
+  "$ROOT/dev/outbox/make-dev-ca.sh"
+  login=$(cat "$DEV/outbox/smtp-login")
+  if [ "$(cat "$DEV/outbox-smtp-username" 2>/dev/null || true)" != "${login%%:*}" ]; then
+    printf '%s\n' "${login%%:*}" | put "$DEV/outbox-smtp-username"
+  fi
+  if [ "$(cat "$DEV/outbox-smtp-password" 2>/dev/null || true)" != "${login#*:}" ]; then
+    printf '%s\n' "${login#*:}" | put "$DEV/outbox-smtp-password"
+  fi
+  unset login
+  # Mailpit relays mail for the probe account back to Stalwart's port 25, standing in for the
+  # internet's way from SES to the public MX (dev/stack/compose.dev.yaml).
+  mounted "$DEV/outbox/relay.yaml" <<'EOF'
+# Written by ./kasten dev up: relay the probe's messages to Stalwart's inbound SMTP.
+host: mail
+port: 25
+starttls: false
+auth: none
+preserve-message-ids: true
+EOF
+}
+
+NEW_YOU=false
+ensure_passwords() {
+  if [ ! -s "$DEV/you-password" ]; then
+    new_password | put "$DEV/you-password"
+    NEW_YOU=true
+  fi
+  [ -s "$DEV/sam-password" ] || new_password | put "$DEV/sam-password"
+  [ -s "$DEV/probe-password" ] || new_password | put "$DEV/probe-password"
+}
+
+ensure_operator_key() {
+  op=$DEV/operator
+  if [ -s "$op/pub.asc" ] && [ -s "$op/sec.asc" ] && [ -s "$op/passphrase" ] && [ -s "$op/key.info" ]; then
+    return 0
+  fi
+  step "creating the dev operator key (OpenPGP v4, Ed25519 and Cv25519, no expiry)"
+  rm -f "$op/pub.asc" "$op/sec.asc" "$op/key.info"
+  random_hex 32 | put "$op/passphrase"
+  say "Kasten dev operator <operator@$DOMAIN>" | put "$op/uid"
+  compose --progress quiet run --rm --no-deps -T -v "$op:/io" gpg keygen
+  if ! grep -q '^key [0-9A-F]\{40\} version 4 algo 22 expires never$' "$op/key.info" ||
+    ! grep -q '^encsub [0-9A-F]\{16\} algo 18 expires never$' "$op/key.info"; then
+    fail "the dev operator key is not the expected v4 Ed25519/Cv25519 key without expiry"
+  fi
+}
+
+write_kasten_json() {
+  put "$DEV/kasten.json" <<EOF
+{
+  "//": "Written by ./kasten dev up for the local dev stack. Relative paths are relative to this file.",
+  "serverHostname": "mx.$DOMAIN",
+  "mailApiHostname": "localhost",
+  "domains": [{ "name": "$DOMAIN", "catchAll": "you@$DOMAIN" }],
+  "users": [
+    { "email": "you@$DOMAIN", "description": "You", "aliases": ["hello@$DOMAIN"], "passwordFile": "you-password" },
+    { "email": "sam@$DOMAIN", "description": "Sam", "aliases": [], "passwordFile": "sam-password" },
+    { "email": "$PROBE", "description": "Delivery probe (kasten probe)", "aliases": [], "passwordFile": "probe-password" }
+  ],
+  "webApp": { "origin": "$WEB_ORIGIN", "redirectPath": "/oauth/callback", "oauthClientId": "$CLIENT_ID" },
+  "http": { "mode": "dev", "bind": "0.0.0.0:8080" },
+  "imapImportBind": "0.0.0.0:143",
+  "relays": [{ "domain": "kasten.test", "host": "outbox", "port": 587, "usernameFile": "outbox-smtp-username", "passwordFile": "outbox-smtp-password" }],
+  "operatorPublicKeyFile": "operator/pub.asc",
+  "admin": {
+    "apiUrl": "$CLI_API_URL",
+    "apiKeyFile": "admin-api-key",
+    "account": "$ADMIN_ACCOUNT",
+    "//allowedIps": "The admin network (the cli service) and the gateway of the default network (127.0.0.1:7481 on this machine).",
+    "allowedIps": ["$TOOLS_NETWORK", "$HOST_GATEWAY"]
+  },
+  "stateDir": "state",
+  "kumaPushUrlFile": null,
+  "probe": { "account": "$PROBE", "passwordFile": "probe-password", "kumaPushUrlFile": null },
+  "dns": { "sesRegion": "eu-central-1" }
+}
+EOF
+}
+
+init_volume() {
+  if [ -s "$DEV/mail.env" ]; then
+    compose --progress quiet run --rm --no-deps -T mail init >/dev/null ||
+      fail "the dev volume does not match $DEV/mail.env. Run ./kasten dev reset to start again."
+  else
+    step "creating the dev mail volume"
+    out=$(compose --progress quiet run --rm --no-deps -T -e KASTEN_VOLUME_ID= mail init)
+    id=$(printf '%s\n' "$out" | sed -n 's/.*"volumeId":"\([0-9a-f]\{32\}\)".*/\1/p')
+    [ -n "$id" ] || fail "kasten-server init printed no volume id"
+    # An old volume without its .kasten-dev/ has accounts whose passwords are lost.
+    case $out in
+      *'"created":false'*) fail "the dev mail volume already exists, but $DEV was deleted. Run ./kasten dev reset to start again." ;;
+    esac
+    printf 'KASTEN_VOLUME_ID=%s\n' "$id" | put "$DEV/mail.env"
+  fi
+}
+
+volume_id() {
+  sed -n 's/^KASTEN_VOLUME_ID=//p' "$DEV/mail.env"
+}
+
+cli() {
+  compose --progress quiet run --rm --no-deps -T "$@"
+}
+
+# indented <command...>: run a command, print its output indented, and return its status.
+indented() {
+  status=0
+  out=$("$@" 2>&1) || status=$?
+  printf '%s\n' "$out" | sed 's/^/    /'
+  return "$status"
+}
+
+# First boot, offline. Stalwart's very first start, in any mode, inserts the web admin UI and
+# starts downloading it; recovery mode inserts no ASN/GeoIP source, but the first normal start
+# would insert one that downloads (docs/stalwart-v1.0.1.md, section 13). So the recovery
+# container gets no network at all, and the CLI joins its network namespace to reach it on
+# 127.0.0.1. Bootstrap then stores the web admin UI and ASN/GeoIP as disabled before the first
+# normal start. The recovery log stays in first-boot-recovery.log for checks.
+bootstrap() {
+  [ -s "$DEV/admin-api-key" ] && [ -f "$DEV/.bootstrapped" ] && return 0
+  step "first boot, offline: Stalwart in recovery mode without a network, then kasten setup --bootstrap"
+  if mail_running; then compose stop mail; fi
+  docker rm -f "$RECOVERY" >/dev/null 2>&1 || true
+  docker run -d --name "$RECOVERY" --network none --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --memory 963m --memory-swap 963m --env-file "$DEV/mail.env" \
+    -v "${PROJECT}_kasten-mail:/var/lib/kasten" "kasten-server:$KASTEN_DEV_IMAGE_TAG" recovery >/dev/null
+  tries=0
+  until docker exec "$RECOVERY" /usr/local/bin/kasten-server health 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 60 ] || [ "$(docker inspect -f '{{.State.Running}}' "$RECOVERY" 2>/dev/null)" != true ]; then
+      docker logs --tail 30 "$RECOVERY" >&2 2>&1 || true
+      docker rm -f "$RECOVERY" >/dev/null 2>&1 || true
+      fail "Stalwart did not start in recovery mode"
+    fi
+    sleep 1
+  done
+  docker exec "$RECOVERY" cat /var/lib/kasten/secrets/recovery-admin | put "$DEV/recovery-admin"
+  ok=true
+  indented docker run --rm --network "container:$RECOVERY" --user "$KASTEN_UID:$KASTEN_GID" \
+    --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+    -v "$DEV:/kasten-dev:ro" -v "$DEV:/kasten-dev-rw" -w /kasten-dev "kasten-cli:$KASTEN_DEV_IMAGE_TAG" \
+    setup --config /kasten-dev/kasten.json --bootstrap \
+    --recovery-admin-file /kasten-dev/recovery-admin --api-key-out /kasten-dev-rw/admin-api-key \
+    --url http://127.0.0.1:8080 || ok=false
+  rm -f "$DEV/recovery-admin"
+  docker stop -t 30 "$RECOVERY" >/dev/null
+  docker logs "$RECOVERY" 2>&1 | put "$DEV/first-boot-recovery.log"
+  docker rm -f "$RECOVERY" >/dev/null
+  [ "$ok" = true ] && [ -s "$DEV/admin-api-key" ] || fail "kasten setup --bootstrap failed"
+  : | put "$DEV/.bootstrapped"
+}
+
+wait_healthy() {
+  tries=0
+  until [ "$(mail_health)" = healthy ]; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 120 ] || fail "the mail container is not healthy ($(mail_health)). See ./kasten dev logs mail"
+    sleep 1
+  done
+}
+
+configure() {
+  step "kasten setup (applies the configuration and reads it back)"
+  # Setup keeps a due restart in the state directory, so a failed run cannot lose it.
+  (umask 077 && mkdir -p "$DEV/state")
+  indented cli -v "$DEV/state:/kasten-dev/state" cli setup --config /kasten-dev/kasten.json || fail "kasten setup failed"
+  if printf '%s\n' "$out" | grep -q '^Restart Stalwart to apply'; then
+    step "restarting Stalwart, then checking the setup again"
+    compose restart mail >/dev/null
+    wait_healthy
+    indented cli -v "$DEV/state:/kasten-dev/state" cli setup --config /kasten-dev/kasten.json || fail "kasten setup failed after the restart"
+  fi
+}
+
+operator_armor() {
+  json_escape <"$DEV/operator/pub.asc"
+}
+
+write_web_config() {
+  mounted "$DEV/web/config.json" <<EOF
+{
+  "apiUrl": "$API_URL",
+  "oauthClientId": "$CLIENT_ID",
+  "operatorKeys": ["$(operator_armor)"],
+  "appName": "Kasten"
+}
+EOF
+}
+
+write_state() {
+  fpr=$(sed -n 's/^key \([0-9A-F]*\) .*/\1/p' "$DEV/operator/key.info")
+  subs=$(sed -n 's/^encsub \([0-9A-F]*\) .*/"\1"/p' "$DEV/operator/key.info" | paste -sd, -)
+  put "$DEV/state.json" <<EOF
+{
+  "//": "Written by ./kasten dev up. Paths of credential files only, never the secrets themselves.",
+  "version": 1,
+  "repoDir": "$ROOT",
+  "devDir": "$DEV",
+  "composeProject": "$PROJECT",
+  "apiUrl": "$API_URL",
+  "webOrigin": "$WEB_ORIGIN",
+  "domain": "$DOMAIN",
+  "oauth": {
+    "issuer": "$API_URL",
+    "clientId": "$CLIENT_ID",
+    "redirectUri": "$REDIRECT_URI",
+    "scope": "$SCOPE"
+  },
+  "users": {
+    "you": { "email": "you@$DOMAIN", "aliases": ["hello@$DOMAIN"], "passwordFile": "$DEV/you-password" },
+    "sam": { "email": "sam@$DOMAIN", "aliases": [], "passwordFile": "$DEV/sam-password" },
+    "probe": { "email": "$PROBE", "aliases": [], "passwordFile": "$DEV/probe-password" }
+  },
+  "stateDir": "$DEV/state",
+  "admin": {
+    "account": "$ADMIN_ACCOUNT",
+    "apiKeyFile": "$DEV/admin-api-key",
+    "hostUrl": "$API_URL",
+    "cliUrl": "$CLI_API_URL",
+    "allowedIps": ["$TOOLS_NETWORK", "$HOST_GATEWAY"]
+  },
+  "operatorKey": {
+    "publicKeyFile": "$DEV/operator/pub.asc",
+    "privateKeyFile": "$DEV/operator/sec.asc",
+    "passphraseFile": "$DEV/operator/passphrase",
+    "fingerprint": "$fpr",
+    "encryptionSubkeyIds": [$subs]
+  },
+  "smtp": { "host": "127.0.0.1", "port": $PORT_SMTP },
+  "imap": { "host": "127.0.0.1", "port": $PORT_IMAP },
+  "outbox": { "url": "$OUTBOX_URL", "apiUrl": "$OUTBOX_URL/api/v1", "smtpLoginFile": "$DEV/outbox/smtp-login" },
+  "kastenConfigFile": "$DEV/kasten.json",
+  "webConfigFile": "$DEV/web/config.json",
+  "webConfig": {
+    "apiUrl": "$API_URL",
+    "oauthClientId": "$CLIENT_ID",
+    "operatorKeys": ["$(operator_armor)"],
+    "appName": "Kasten"
+  },
+  "docker": {
+    "context": "${DOCKER_CONTEXT:-}",
+    "mailContainer": "$MAIL_CONTAINER",
+    "volume": "${PROJECT}_kasten-mail",
+    "volumeId": "$(volume_id)",
+    "networks": { "default": "${PROJECT}_default", "admin": "${PROJECT}_admin" },
+    "images": {
+      "mail": "kasten-server:$KASTEN_DEV_IMAGE_TAG",
+      "cli": "kasten-cli:$KASTEN_DEV_IMAGE_TAG",
+      "gpg": "kasten-dev-gpg:$KASTEN_DEV_IMAGE_TAG"
+    }
+  }
+}
+EOF
+  chmod 0644 "$DEV/state.json"
+}
+
+dev_up() {
+  [ "$#" -eq 0 ] || fail "usage: ./kasten dev up"
+  need_docker
+  ensure_dev_dir
+  step "dev CA and outbox login"
+  ensure_outbox
+  step "building the images"
+  compose build mail cli gpg web
+  ensure_passwords
+  ensure_operator_key
+  write_kasten_json
+  write_web_config
+  init_volume
+  bootstrap
+  step "starting the stack"
+  if [ "$ISOLATED" = true ]; then
+    compose up -d --wait --wait-timeout 180 mail outbox
+  else
+    compose up -d --wait --wait-timeout 180
+  fi
+  wait_healthy
+  configure
+  step "dev-only settings (spam filter off for the tools network)"
+  indented cli -v "$ROOT/dev:/opt/kasten/dev:ro" --entrypoint node cli \
+    /opt/kasten/dev/stack/dev-settings.ts /kasten-dev/kasten.json "$TOOLS_NETWORK" ||
+    fail "the dev-only settings failed"
+  write_state
+  say ""
+  say "Kasten dev stack is up."
+  say "  Web app     $WEB_ORIGIN"
+  say "  Mail API    $API_URL (JMAP and sign-in)"
+  say "  SMTP in     localhost:$PORT_SMTP"
+  say "  Outbox      $OUTBOX_URL (catches outgoing mail)"
+  say "  Dev state   $DEV/state.json"
+  if [ "$NEW_YOU" = true ]; then
+    say ""
+    say "Sign in as you@$DOMAIN with this password. It is shown only now; it is also in $DEV/you-password."
+    say "  $(cat "$DEV/you-password")"
+  else
+    say "  Sign in as you@$DOMAIN; the password is in $DEV/you-password."
+  fi
+}
+
+# --- other dev commands -------------------------------------------------------------------
+
+dev_down() {
+  [ "$#" -eq 0 ] || fail "usage: ./kasten dev down"
+  need_docker
+  docker rm -f "$RECOVERY" >/dev/null 2>&1 || true
+  compose --profile tools down --remove-orphans
+  say "Stopped. The dev data is kept; ./kasten dev up starts it again."
+}
+
+dev_reset() {
+  yes=false
+  for arg in "$@"; do
+    case $arg in
+      --yes | -y) yes=true ;;
+      *) fail "usage: ./kasten dev reset [--yes]" ;;
+    esac
+  done
+  need_docker
+  if [ -e "$DEV" ] && [ ! -f "$DEV/.kasten-dev" ]; then
+    fail "$DEV has no .kasten-dev marker, so it was not made by ./kasten dev up; refusing to delete it"
+  fi
+  if [ "$yes" != true ]; then
+    [ -t 0 ] || fail "dev reset needs a confirmation; run it in a terminal or pass --yes"
+    printf 'This deletes the dev mailbox volume and %s (dev keys, passwords and mail). Type "reset" to continue: ' "$DEV"
+    read -r answer
+    [ "$answer" = reset ] || fail "nothing was deleted"
+  fi
+  docker rm -f "$RECOVERY" >/dev/null 2>&1 || true
+  compose --profile tools down --volumes --remove-orphans
+  rm -rf "$DEV"
+  say "Deleted the dev volume and $DEV. ./kasten dev up creates a new stack."
+}
+
+dev_status() {
+  [ "$#" -eq 0 ] || fail "usage: ./kasten dev status"
+  need_docker
+  compose ps -a
+  health=$(mail_health)
+  say ""
+  say "mail: $health"
+  if [ -f "$DEV/.bootstrapped" ]; then say "setup: done (state in $DEV/state.json)"; else say "setup: not done; run ./kasten dev up"; fi
+  say "Web app $WEB_ORIGIN | Mail API $API_URL | SMTP localhost:$PORT_SMTP | Outbox $OUTBOX_URL"
+  [ "$health" = healthy ]
+}
+
+dev_logs() {
+  need_docker
+  compose logs "$@"
+}
+
+dev_mail() {
+  [ "$#" -eq 0 ] || fail "usage: ./kasten dev mail"
+  need_docker
+  [ -f "$DEV/state.json" ] || fail "the dev stack is not set up; run ./kasten dev up first"
+  [ "$(mail_health)" = healthy ] || fail "the mail container is not running and healthy; run ./kasten dev up"
+  cli -v "$ROOT/dev:/opt/kasten/dev:ro" --entrypoint node cli /opt/kasten/dev/mail/send.ts \
+    --smtp mail:25 --to "you@$DOMAIN" --api "$CLI_API_URL" --password-file /kasten-dev/you-password
+}
+
+# dev serve: dev up, then follow the logs in the foreground. SIGINT or SIGTERM runs dev down,
+# which keeps the data, and exits 0. Preview managers run this to start and stop the app.
+SERVE_LOGS_PID=
+serve_stop() {
+  # Ignore further signals, so a second Ctrl-C cannot cut dev down short. Children inherit this.
+  trap '' INT TERM
+  say ""
+  step "stopping the stack"
+  if [ -n "${SERVE_FORWARD_PID:-}" ]; then kill "$SERVE_FORWARD_PID" 2>/dev/null || true; fi
+  dev_down
+  # The log stream ends by itself once its containers are gone. (Killing it would stop only the
+  # subshell that runs the compose function, not docker compose itself.)
+  if [ -n "$SERVE_LOGS_PID" ]; then wait "$SERVE_LOGS_PID" 2>/dev/null || true; fi
+  exit 0
+}
+
+dev_serve() {
+  [ "$#" -eq 0 ] || fail "usage: ./kasten dev serve"
+  if [ "$ISOLATED" = false ]; then
+    # The web container moves to a private port, and this process forwards the app's port to it,
+    # so whoever started dev serve owns the app's port (dev/stack/compose.serve.yaml).
+    command -v node >/dev/null 2>&1 || fail "dev serve needs Node.js 24 for its port forwarder"
+    SERVE=true
+    KASTEN_DEV_PORT_WEB_INNER=$((PORT_WEB + 10000))
+    export KASTEN_DEV_PORT_WEB_INNER
+  fi
+  # A signal during dev up waits for its current command, then stops the stack the same way.
+  trap serve_stop INT TERM
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  dev_up
+  if [ "$ISOLATED" = false ]; then
+    node "$ROOT/dev/serve/forward.ts" 127.0.0.1 "$PORT_WEB" "$KASTEN_DEV_PORT_WEB_INNER" &
+    SERVE_FORWARD_PID=$!
+  fi
+  if [ "$ISOLATED" = true ]; then followed=mail; else followed='web mail'; fi
+  say ""
+  step "following the logs of $followed; Ctrl-C stops the stack and keeps its data"
+  # In the background, so the trap runs as soon as a signal arrives. The shell gives a
+  # background job ignored SIGINT, so on Ctrl-C the logs keep showing the shutdown.
+  # shellcheck disable=SC2086 # service names are single words
+  compose logs --follow --since "$since" $followed &
+  SERVE_LOGS_PID=$!
+  status=0
+  wait "$SERVE_LOGS_PID" || status=$?
+  SERVE_LOGS_PID=
+  fail "the logs ended (status $status), so the stack is no longer running; see ./kasten dev status"
+}
+
+# --- the CLI ------------------------------------------------------------------------------
+
+# security-check in dev: from a container on the stack's default network, which is neither
+# loopback nor allowed by the admin key, like the internet. The real recovery admin secret goes
+# to a 0600 file for the one run, so the check proves that this login really fails.
+run_security_check() {
+  has_url=false
+  for arg in "$@"; do
+    case $arg in --url | --url=*) has_url=true ;; esac
+  done
+  [ "$has_url" = true ] || set -- "$@" --url http://mail:8080
+  recovery=$DEV/out/.recovery-admin.$$
+  docker exec "$MAIL_CONTAINER" cat /var/lib/kasten/secrets/recovery-admin | put "$recovery"
+  status=0
+  docker run --rm --network "${PROJECT}_default" --user "$KASTEN_UID:$KASTEN_GID" \
+    --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+    -v "$DEV:/kasten-dev:ro" -v "$DEV/out:/kasten-dev/out" -w /kasten-dev \
+    "kasten-cli:$KASTEN_DEV_IMAGE_TAG" "$@" --recovery-admin-file "/kasten-dev/out/${recovery##*/}" ||
+    status=$?
+  rm -f "$recovery"
+  return "$status"
+}
+
+run_cli() {
+  need_docker
+  [ -f "$DEV/kasten.json" ] || fail "the dev stack is not set up; run ./kasten dev up first"
+  (umask 077 && mkdir -p "$DEV/state" "$DEV/out")
+  case $1 in
+    setup | config | dns | user | domain | keys | lock | reader | app-password | check | security-check | read | probe | import-imap)
+      has_config=false
+      for arg in "$@"; do
+        case $arg in --config | --config=*) has_config=true ;; esac
+      done
+      [ "$has_config" = true ] || set -- "$@" --config /kasten-dev/kasten.json
+      ;;
+  esac
+  if [ "$1" = security-check ]; then
+    run_security_check "$@"
+    return
+  fi
+  # State and output are writable; the rest of .kasten-dev/ stays read-only.
+  set -- -v "$DEV/state:/kasten-dev/state" -v "$DEV/out:/kasten-dev/out" cli "$@"
+  if [ -t 0 ] && [ -t 1 ]; then
+    compose --progress quiet run --rm --no-deps "$@"
+  else
+    compose --progress quiet run --rm --no-deps -T "$@"
+  fi
+}
+
+[ "$#" -gt 0 ] || {
+  usage >&2
+  exit 2
+}
+
+case $1 in
+  dev)
+    shift
+    sub=${1:-}
+    [ "$#" -eq 0 ] || shift
+    case $sub in
+      up) dev_up "$@" ;;
+      serve) dev_serve "$@" ;;
+      down) dev_down "$@" ;;
+      reset) dev_reset "$@" ;;
+      status) dev_status "$@" ;;
+      logs) dev_logs "$@" ;;
+      mail) dev_mail "$@" ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  -h | --help) usage ;;
+  *) run_cli "$@" ;;
+esac

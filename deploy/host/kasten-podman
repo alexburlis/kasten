@@ -1,0 +1,51 @@
+#!/bin/sh
+# kasten-podman: Podman as the kasten user (rootless Podman), for root. Every Kasten container
+# runs through it.
+#
+#   kasten-podman <podman arguments...>      for example: kasten-podman ps -a
+#   docker save ... | ssh root@<vps> kasten-podman load
+#
+# Podman starts with a clean environment: the kasten user's HOME, XDG_RUNTIME_DIR and session
+# bus, TERM, and only the three backup settings that kasten-mail-exec and kasten-mail-run pass into
+# the mail container (their values sit in env's arguments for the instant before env runs setpriv).
+# setpriv changes the user directly. runuser would open a PAM session, and "systemctl --user -M"
+# starts a transient unit, which systemd refuses while a shutdown is queued: the stop at a reboot
+# could then not remove the mail container before the lock.
+#
+# It refuses to create a container unless SELinux is enforcing: the MCS levels in podman.sh keep
+# the mail server away from the CLI's credentials. The file /etc/kasten/test-without-selinux lifts
+# this for the local container test, which cannot enforce SELinux. Never create it on a real host.
+set -eu
+
+KASTEN_UID=2600
+MARKER=/etc/kasten/test-without-selinux
+
+say() { printf 'kasten-podman: %s\n' "$*" >&2; }
+# 125, as Podman's own errors.
+die() {
+  say "$*"
+  exit 125
+}
+
+[ "$(id -u)" -eq 0 ] || die "run as root"
+[ -S "/run/user/$KASTEN_UID/bus" ] || die "the kasten user's manager (user@$KASTEN_UID.service) is not running; install.sh enables it (loginctl enable-linger kasten)"
+
+case ${1:-}:${2:-} in
+  run:* | create:* | container:run | container:create)
+    if [ -e "$MARKER" ]; then
+      say "WARNING: $MARKER exists, so this container starts without the SELinux check, and the mail server could read the CLI's credentials. Only the local test creates this file; never create it on a real host."
+      logger -t kasten-podman -p daemon.warning -- "event=selinux-check result=skipped marker=$MARKER" 2>/dev/null || true
+    elif [ "$(getenforce 2>/dev/null || true)" != Enforcing ]; then
+      die "SELinux is not enforcing, so the mail server could read the CLI's credentials. Set SELINUX=enforcing in /etc/selinux/config and reboot."
+    fi
+    ;;
+esac
+
+# The caller's directory may be closed to the kasten user, for example /root.
+cd /
+exec env -i PATH=/usr/sbin:/usr/bin HOME=/home/kasten XDG_RUNTIME_DIR="/run/user/$KASTEN_UID" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$KASTEN_UID/bus" ${TERM+"TERM=$TERM"} \
+  ${RESTIC_REPOSITORY+"RESTIC_REPOSITORY=$RESTIC_REPOSITORY"} \
+  ${RESTIC_PASSWORD_FILE+"RESTIC_PASSWORD_FILE=$RESTIC_PASSWORD_FILE"} \
+  ${KASTEN_BACKUP_ENV_FILE+"KASTEN_BACKUP_ENV_FILE=$KASTEN_BACKUP_ENV_FILE"} \
+  setpriv --reuid="$KASTEN_UID" --regid="$KASTEN_UID" --init-groups podman "$@"

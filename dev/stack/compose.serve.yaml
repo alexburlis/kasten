@@ -1,0 +1,7 @@
+# Used only by ./kasten dev serve. The web container publishes on a private port, and dev serve's
+# own forwarder (dev/serve/forward.ts) listens on the app's port. A preview manager then sees the
+# app's port owned by dev serve, not by Docker's port forwarder.
+services:
+  web:
+    ports: !override
+      - 127.0.0.1:${KASTEN_DEV_PORT_WEB_INNER:?}:8080

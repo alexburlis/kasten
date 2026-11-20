@@ -1,0 +1,33 @@
+#!/bin/sh
+# Push to an existing Kuma monitor. Prefer KASTEN_PUSH_URL_FILE (root-only, mode 0600).
+# KASTEN_PUSH_URL remains the backup unit's existing environment interface. The protected URL
+# reaches curl only on standard input; HTTP success without Kuma's {"ok":true} is refused.
+set +x
+set -eu
+
+die() { echo "kasten-push: $*" >&2; exit 1; }
+if [ -n "${KASTEN_PUSH_URL_FILE:-}" ]; then
+  [ -f "$KASTEN_PUSH_URL_FILE" ] && [ ! -L "$KASTEN_PUSH_URL_FILE" ] || die "push URL file is missing or a symlink"
+  case $(uname -s) in
+    Darwin) mode=$(stat -f %Lp "$KASTEN_PUSH_URL_FILE") ;;
+    *) mode=$(stat -c %a "$KASTEN_PUSH_URL_FILE") ;;
+  esac
+  [ "$mode" = 600 ] || die "push URL file must have mode 0600"
+  IFS= read -r url <"$KASTEN_PUSH_URL_FILE" || [ -n "${url:-}" ] || die "push URL file is empty"
+else
+  url=${KASTEN_PUSH_URL:-}
+fi
+[ -n "$url" ] || exit 0
+case $url in http://* | https://*) ;; *) die "push URL must use HTTP or HTTPS" ;; esac
+case $url in *\"* | *\\* | *[[:cntrl:]]*) die "push URL contains unsafe characters" ;; esac
+status=${KASTEN_PUSH_STATUS:-up}
+case $status in up | down) ;; *) die "push status must be up or down" ;; esac
+message=${KASTEN_PUSH_MESSAGE:-OK}
+printf '%s\n' "$message" | LC_ALL=C grep -Eq '^[A-Za-z0-9 .,;:_-]+$' || die "push message contains unsafe characters"
+case $message in *[[:cntrl:]]*) die "push message contains unsafe characters" ;; esac
+encoded=$(printf '%s' "$message" | jq -sRr @uri) || die "cannot encode push message"
+if ! response=$(printf 'url = "%s?status=%s&msg=%s&ping="\n' "${url%%\?*}" "$status" "$encoded" |
+  curl -fsS --connect-timeout 10 -m 30 --max-filesize 4096 -K - 2>/dev/null); then
+  die "push request failed"
+fi
+printf '%s' "$response" | jq -e 'type == "object" and .ok == true' >/dev/null 2>&1 || die "Kuma refused the heartbeat"

@@ -1,0 +1,35 @@
+From: You <you@kasten.test>
+To: Bank <alerts@bank.test>
+Subject: KNC-SENT-default GopenPGP
+Date: Fri, 30 Oct 2026 13:37:26 +0000
+Message-ID: <2d1031fa5ae8551509eac4e8@kasten.test>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted";
+ boundary="kasten-2d1031fa5ae8551509eac4e8"
+
+This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)
+
+--kasten-2d1031fa5ae8551509eac4e8
+Content-Type: application/pgp-encrypted
+Content-Description: PGP/MIME version identification
+
+Version: 1
+
+--kasten-2d1031fa5ae8551509eac4e8
+Content-Type: application/octet-stream; name="encrypted.asc"
+Content-Description: OpenPGP encrypted message
+Content-Disposition: inline; filename="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+
+wV4D5lHby1xc58sSAQdAQbc1iGRUq7r+ZsT9rTpLjGxNRGS3z6C/TFPEj0Ni4Www
+8dh0zIkJTcwDr93TPf1/g9VL6Tcq59bITzkY3y3R27HzBEkS1HTm3cNI5lYHOrQ9
+wV4DoT2dOzNNJTESAQdAnVOzCTGfcGZ6L3bKCdjs3Mt5ir8l6S3JrE+dEDJJ/zww
+HllHu5H9dNgw8Y92mizrBztifv5SDUnlgI36hwSP9pZjiCPCMX4IHqinsqgQC4+D
+0qEB+OkOjJ3JKmsFZ9dgsbisErUEQkpIdVwuDZdpDhdO1Adbj0t71qRd2zHEQcBz
+bxDaSANAKDTSvGDyEb/50MPf15vfoAG+aDk5Kokte5C63OuiSauVOfdpcpvnu45r
+pCSDwtacBDNbDWjtvDWOOY+vYMsouVnZdV5jKWhuxnxwoSCfu8QpT28eCX0Ph9z1
+IgTnmjRxEqXMDL6vsgz06ywnqw==
+=Uv28
+-----END PGP MESSAGE-----
+--kasten-2d1031fa5ae8551509eac4e8--

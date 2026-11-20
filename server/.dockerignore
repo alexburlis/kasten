@@ -1,0 +1,3 @@
+# Build context is server/; only Dockerfile, PINS, bin/, etc/ and signin/ are needed.
+test/
+README.md

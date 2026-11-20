@@ -1,0 +1,554 @@
+/* The reading sheet (web/DESIGN.md, Thread): a sticky toolbar, then the letter column with the
+   kicker, the serif subject and the messages as ruled lines. Phones move the reply and the common
+   actions into a bar at the bottom, within thumb reach. */
+
+.thread-pane {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 80px;
+  background: var(--surface);
+}
+
+/* --- toolbar -------------------------------------------------------------------------------- */
+
+.thread-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 56px;
+  padding: 10px 20px 0 14px;
+  background: var(--surface);
+}
+
+.thread-head .actions {
+  margin-left: 6px;
+}
+
+/* --- head of the letter --------------------------------------------------------------------- */
+
+/* The letter column starts under the toolbar's actions and takes the sheet's width up to a
+   comfortable maximum; text keeps a reading measure inside it (.message-text, the letter frame). */
+.thread-body {
+  max-width: 1000px;
+  padding: 22px 48px 0 60px;
+}
+
+.thread-kicker {
+  margin-bottom: 12px;
+}
+
+.thread-subject {
+  margin: 0 0 24px;
+  font: 400 30px/1.18 var(--serif);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+/* It takes focus when the thread opens, so screen readers start at the subject; it is not a
+   control, so it draws no ring. */
+.thread-subject:focus {
+  outline: none;
+}
+
+/* --- messages ------------------------------------------------------------------------------- */
+
+.cards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  border-top: 1px solid var(--rule);
+}
+
+.card.expanded {
+  padding-top: 20px;
+}
+
+/* An open message above another one keeps its distance from the next rule. */
+.card.expanded:not(:last-child) {
+  padding-bottom: 28px;
+}
+
+.card-line {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-line .card-from {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pointer hover only: on touch the tap that opens a thread leaves :hover stuck on this line. */
+@media (hover: hover) {
+  .card-line:hover .card-from {
+    text-decoration: underline;
+    text-decoration-color: var(--rule-strong);
+    text-underline-offset: 3px;
+  }
+}
+
+/* A message collapsed while still unread keeps the list's unread dot. */
+.card-line .card-from.unread::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 7px 1px 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.card-snippet {
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Dates set their own size and colour, so they do not depend on list.css's rule for time. */
+.card-line time,
+.card-meta time {
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.card-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-head .card-from {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.card-address {
+  color: var(--text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.card-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The star is ink when on; amber is kept for "Not encrypted". */
+.card-meta .star.on {
+  color: var(--text);
+}
+
+/* The labels are --text-2 rather than --text-3: they are text people read, and --text-3 is below
+   4.5:1 on the sheet. The addresses take the ink so the two still read apart. */
+.card-recipients {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 1px 10px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.card-recipients dt {
+  color: var(--text-2);
+}
+
+.card-recipients dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.safety {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.safety-detail {
+  max-width: 60ch;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.card-body {
+  margin-top: 20px;
+}
+
+/* "Decrypting…" sits where the letter will start, not centred like an empty pane. */
+.card-body > .empty {
+  justify-items: start;
+  padding: 0;
+  text-align: left;
+}
+
+/* --- the letter ----------------------------------------------------------------------------- */
+
+.message-text {
+  max-width: 80ch;
+  font: 400 17px/1.62 var(--serif);
+  letter-spacing: -0.002em;
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  hanging-punctuation: first;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.remote-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.remote-bar .icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* HTML mail. Correspondence shows as a letter (ui/letter.ts): the frame copies this element's
+   type and colours, which are the letter's, so it reads like a plain-text message in light and
+   dark. Designed mail keeps its own light page on a card; dark mode dims the card instead of
+   inverting the mail. The frame is light (MessageFrame's base CSS), so the element is light too: a
+   frame whose scheme differs from its element's gets an opaque canvas. */
+.message-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: 400 17px/1.62 var(--serif);
+  color-scheme: light;
+}
+
+.message-frame[data-look="card"] {
+  min-height: 48px;
+  border-radius: 10px;
+  background: var(--mail-card);
+  box-shadow: var(--shadow-card);
+  filter: brightness(var(--mail-dim));
+}
+
+/* --- attachments ---------------------------------------------------------------------------- */
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  height: 48px;
+  padding: 0 6px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.attachment-icon,
+.attachment-preview {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+}
+
+.attachment-icon {
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.attachment-preview {
+  background: var(--surface-2);
+  object-fit: cover;
+}
+
+.attachment-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.attachment-name {
+  max-width: 200px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-size {
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.attachment .icon-button {
+  margin-left: 6px;
+}
+
+/* --- reply ---------------------------------------------------------------------------------- */
+
+.reply-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+}
+
+.reply-bar .button {
+  height: 36px;
+}
+
+/* --- phones --------------------------------------------------------------------------------- */
+
+/* The top keeps Back and the rarer actions (Mark as read, Star, Report spam). Archive, Delete,
+   Mark as unread and Move to join Reply in a bar pinned to the bottom: five targets of 44 px.
+   They are fixed in place from the right, so Reply keeps its width whatever the mailbox; Reply
+   all and Forward stay under the letter. ThreadActions' markup is unchanged. */
+@media (max-width: 719px) {
+  .thread-pane {
+    --dock: 64px;
+    --dock-slot: 48px;
+    --dock-bottom: calc(10px + env(safe-area-inset-bottom));
+
+    padding-bottom: calc(var(--dock) + 32px + env(safe-area-inset-bottom));
+  }
+
+  .thread-head {
+    gap: 0;
+    height: 52px;
+    padding: 0 4px;
+  }
+
+  .thread-head .back-button {
+    width: 44px;
+    height: 44px;
+    color: var(--accent);
+  }
+
+  .thread-head .back-button .icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .thread-head .actions {
+    gap: 0;
+    margin-left: auto;
+  }
+
+  .thread-head .actions > :is(button, label) {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .thread-head .actions .icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .thread-head .actions-sep,
+  .thread-head .action-label {
+    display: none;
+  }
+
+  /* The bar itself: drawn by the toolbar so it is there whenever the actions are. */
+  .thread-head::before {
+    content: "";
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: calc(var(--dock) + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    backdrop-filter: blur(16px) saturate(1.2);
+  }
+
+  .thread-head
+    :is(
+      [data-testid="action-archive"],
+      [data-testid="action-delete"],
+      [data-testid="action-unread"],
+      .move-to
+    ) {
+    position: fixed;
+    bottom: var(--dock-bottom);
+  }
+
+  .thread-head .move-to {
+    right: 12px;
+  }
+
+  .thread-head [data-testid="action-unread"] {
+    right: calc(12px + var(--dock-slot));
+  }
+
+  .thread-head [data-testid="action-delete"] {
+    right: calc(12px + 2 * var(--dock-slot));
+  }
+
+  .thread-head [data-testid="action-archive"] {
+    right: calc(12px + 3 * var(--dock-slot));
+  }
+
+  .thread-body {
+    padding: 10px 20px 0;
+  }
+
+  .thread-subject {
+    margin-bottom: 18px;
+    font-size: 26px;
+  }
+
+  .card-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+  }
+
+  .card-line .card-from {
+    font-size: 15px;
+  }
+
+  .card-line .card-snippet {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    font-size: 14.5px;
+  }
+
+  .card-line time {
+    grid-row: 1;
+    grid-column: 2;
+    font-size: 13px;
+  }
+
+  .card-head {
+    align-items: flex-start;
+  }
+
+  .card-head .card-from {
+    font-size: 16px;
+  }
+
+  .card-who {
+    display: grid;
+    gap: 1px;
+  }
+
+  .card-recipients {
+    font-size: 13px;
+  }
+
+  .message-text,
+  .message-frame {
+    font-size: 17.5px;
+    line-height: 1.6;
+  }
+
+  .attachment {
+    flex: 1 1 100%;
+  }
+
+  .attachment-name {
+    max-width: none;
+  }
+
+  .attachment .icon-button {
+    width: 44px;
+    height: 44px;
+    margin-left: auto;
+  }
+
+  .reply-bar {
+    margin-top: 28px;
+    padding-top: 16px;
+  }
+
+  .reply-bar .button {
+    flex: 1 1 0;
+    height: 44px;
+    font-size: 15.5px;
+  }
+
+  .reply-bar kbd {
+    display: none;
+  }
+
+  .reply-bar .button.primary {
+    position: fixed;
+    bottom: var(--dock-bottom);
+    left: 12px;
+    z-index: 15;
+    width: calc(100% - 24px - 4 * var(--dock-slot) - 4px);
+  }
+
+  /* Archive, Trash and Spam have no Archive button, so Reply takes its slot. */
+  .thread-pane:not(:has([data-testid="action-archive"])) .reply-bar .button.primary {
+    width: calc(100% - 24px - 3 * var(--dock-slot) - 4px);
+  }
+}

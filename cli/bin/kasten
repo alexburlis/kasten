@@ -1,0 +1,6 @@
+#!/bin/sh
+# The kasten command. Runs the TypeScript CLI directly with Node 24's type stripping.
+set -eu
+
+here=$(dirname "$(readlink -f "$0")")
+exec node "$here/../src/main.ts" "$@"

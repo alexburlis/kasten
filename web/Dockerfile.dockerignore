@@ -1,0 +1,17 @@
+# Build context for web/Dockerfile (BuildKit reads this file because it sits next to the Dockerfile).
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!packages/core/package.json
+!packages/core/src
+!cli/package.json
+!web/package.json
+!web/index.html
+!web/vite.config.ts
+!web/tsconfig.json
+!web/public
+!web/scripts
+!web/src
+!web/docker

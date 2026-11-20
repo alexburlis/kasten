@@ -1,0 +1,25 @@
+Kasten
+Copyright 2026 Alex Burlis
+
+Kasten source is licensed under the Apache License, Version 2.0 (see LICENSE).
+Third-party components retain their own licenses.
+
+Web app
+  web/THIRD_PARTY_LICENSES.txt contains the bundled JavaScript packages'
+  versions, copyright notices, license texts, and upstream source links.
+  The web build regenerates the notice for its output.
+
+Vendored tooling
+  The vendored ESLint Stylistic rule retains its license and provenance in
+  tools/oxlint/anti-slop/vendor/eslint-stylistic/LICENSE and UPSTREAM.md.
+
+Software fetched by local builds
+  The source preview contains build recipes. The server recipe fetches
+  Stalwart Community 1.0.1 (AGPL-3.0), its separately maintained spam rules,
+  and restic 0.19.1 (BSD-2-Clause). See server/PINS for exact artifacts.
+  Stalwart source: https://github.com/stalwartlabs/stalwart/tree/v1.0.1
+  Spam rules: https://github.com/stalwartlabs/spam-filter/tree/v3.0.3
+  restic license: https://github.com/restic/restic/blob/v0.19.1/LICENSE
+
+  Container base images and their distribution packages carry their own
+  notices. See the image references in the Dockerfiles and Compose files.

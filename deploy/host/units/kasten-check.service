@@ -1,0 +1,21 @@
+# Optional co-located safety check for generic installs. The personal deployment runs it from
+# the Mac (deploy/observer). kasten-check calls the aggregate CLI once for all non-probe users,
+# in a one-shot kasten-cli container. The container sees /var/lib/kasten/cli read-only as
+# /etc/kasten (kasten.json, the admin key, the Kuma push URL file) and its state directory
+# writable as /etc/kasten/state (the pinned key set from kasten lock, the reader credential from
+# kasten reader create, the check state). kasten check pushes one combined result to Kuma. The
+# unit fails on any account's problem. A lock stops this unit with kasten.service, and the stop
+# ends the container too (podman.sh: --init).
+[Unit]
+Description=Kasten: daily safety check
+Requisite=kasten.service
+After=kasten.service kasten-backup.service
+
+[Service]
+Type=oneshot
+# Rootless Podman moves itself out of this unit's cgroup, and journald then files the
+# container's output under user@2600.service, so "journalctl -u" misses it. Read it with
+# "journalctl -t kasten-check": the lines keep this identifier.
+SyslogIdentifier=kasten-check
+ExecStart=/usr/local/sbin/kasten-check
+TimeoutStartSec=3h

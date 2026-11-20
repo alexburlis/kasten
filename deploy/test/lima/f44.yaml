@@ -1,0 +1,29 @@
+# Lima template for upgrade.sh: a Fedora 44 Cloud VM with 1 GiB of memory, like the 1 GB VPS, to
+# rehearse the Fedora release upgrade to Fedora 45 with Kasten installed.
+#
+# The image is pinned by its SHA-256 digest, as Fedora's signed CHECKSUM file gives it:
+# https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/aarch64/images/Fedora-Cloud-44-1.7-aarch64-CHECKSUM
+# (signed by "Fedora (44)", key 36F612DCF27F7D1A48A835E4DBFCF71C6D9F90A6). Lima's own fedora-44
+# template names the same image and digest. The production VPS is amd64; this VM is aarch64,
+# because the vz driver runs only the Mac's own architecture.
+#
+# Plain mode: no host mounts, no port forwarding and no containerd, so the VM holds nothing but the
+# Fedora image and what the test puts there.
+minimumLimaVersion: 2.0.0
+vmType: vz
+arch: aarch64
+cpus: 2
+memory: 1GiB
+disk: 20GiB
+images:
+  - location: https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-44-1.7.aarch64.qcow2
+    arch: aarch64
+    digest: sha256:55c60a3b80d3616a08705afd0459e75fe9f03c54aba7a46e4002a41a72fa0d5b
+plain: true
+mounts: []
+containerd:
+  system: false
+  user: false
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false

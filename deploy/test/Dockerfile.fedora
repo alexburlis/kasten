@@ -1,0 +1,33 @@
+# Test image for deploy/test/run.sh: the VPS. Fedora 45 with systemd as PID 1, like a fresh Fedora
+# Cloud image; install.sh installs Podman and the rest, as on a real host. The changes below exist
+# only because this is a container, not a VM; run.sh lists them. The Tang host and the client use
+# the Debian image (Dockerfile).
+FROM quay.io/fedora/fedora:45@sha256:10989b31ee8859a592f8f8d9992406d7d4483e99091e6ff686a352b6c040dccd
+# What every Fedora Cloud host has and the container image lacks: systemd with its PAM module and
+# D-Bus (the kasten user's manager needs both), udev, and the base tools. nmap-ncat is the test's
+# own listener and client; conntrack-tools lets the firewall stage drop a session's conntrack entry.
+RUN dnf5 -y -q --setopt=install_weak_deps=False install systemd systemd-pam systemd-udev dbus-broker \
+      util-linux iproute procps-ng libselinux-utils nmap-ncat conntrack-tools \
+ && dnf5 clean all
+# The image's layers lost the file capabilities of newuidmap and newgidmap, which rootless Podman
+# needs; rpm sets them again. Fedora's /etc/shadow has mode 0000, and the VM's AppArmor profile for
+# unix_chkpwd denies it the capability to read such a file, so PAM would refuse the kasten user's
+# manager; mode 0400 lets root read it without that capability.
+RUN rpm --setcaps shadow-utils \
+ && chmod 0400 /etc/shadow
+# A container shares the VM's kernel: its own udev must not run, so device-mapper creates its
+# device nodes itself (DM_DISABLE_UDEV), and loop nodes are created at boot (no devtmpfs).
+# binfmt_misc is not namespaced either: in a privileged container, systemd-binfmt would clear
+# the VM's handlers (Rosetta, for example) when it starts and stops, for every user of the VM.
+RUN systemctl mask systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket \
+      systemd-udev-trigger.service systemd-udev-settle.service console-getty.service getty.target \
+      systemd-binfmt.service proc-sys-fs-binfmt_misc.automount proc-sys-fs-binfmt_misc.mount \
+ && mkdir -p /etc/systemd/system.conf.d \
+ && printf '[Manager]\nDefaultEnvironment=DM_DISABLE_UDEV=1\n' >/etc/systemd/system.conf.d/kasten-deploytest.conf
+COPY standin/ /usr/local/lib/kasten-deploytest/
+RUN install -m 0644 /usr/local/lib/kasten-deploytest/kasten-deploytest-devnodes.service \
+      /usr/local/lib/kasten-deploytest/kasten-deploytest-rshared.service \
+      /usr/local/lib/kasten-deploytest/tailscaled.service /etc/systemd/system/ \
+ && systemctl enable kasten-deploytest-devnodes.service kasten-deploytest-rshared.service tailscaled.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

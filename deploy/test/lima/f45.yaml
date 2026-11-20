@@ -1,0 +1,27 @@
+# Lima template for f45.sh: a Fedora 45 Cloud VM with 1 GiB of memory, like the 1 GB VPS.
+#
+# The image is pinned by its SHA-256 digest, as Fedora's signed CHECKSUM file gives it:
+# https://download.fedoraproject.org/pub/fedora/linux/releases/45/Cloud/aarch64/images/Fedora-Cloud-45-1.4-aarch64-CHECKSUM
+# (signed by "Fedora (45)", key 4F50A6114CD5C6976A7F1179655A4B02F577861E). The production VPS is
+# amd64; this VM is aarch64, because the vz driver runs only the Mac's own architecture.
+#
+# Plain mode: no host mounts, no port forwarding and no containerd, so the VM holds nothing but the
+# Fedora image and what the test puts there.
+minimumLimaVersion: 2.0.0
+vmType: vz
+arch: aarch64
+cpus: 2
+memory: 1GiB
+disk: 20GiB
+images:
+  - location: https://download.fedoraproject.org/pub/fedora/linux/releases/45/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-45-1.4.aarch64.qcow2
+    arch: aarch64
+    digest: sha256:1632acc8bc14d45b6c9596a0acc71b070d3748d1abdcf1a519be5c983bb0286c
+plain: true
+mounts: []
+containerd:
+  system: false
+  user: false
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false

@@ -1,0 +1,79 @@
+#!/bin/sh
+# Verify a synthetic mail-body canary stayed off unencrypted file systems. Read-only: prints
+# counts only, never a matching file's contents. Run after the canary's receive/send/delete
+# workload. Plaintext INSIDE LUKS is an accepted Stalwart limit, not a failure of this check.
+set -eu
+umask 077
+[ "$#" -ge 1 ] || { echo "usage: kasten-residue-check <synthetic-canary-file> [filesystem-root ...]" >&2; exit 2; }
+canary_file=$1
+shift
+[ -r "$canary_file" ] || { echo "residue-check: canary file is not readable" >&2; exit 2; }
+IFS= read -r canary <"$canary_file" || [ -n "${canary:-}" ] || exit 2
+case $canary in *[!A-Za-z0-9_-]* | '') echo "residue-check: use one synthetic ASCII marker" >&2; exit 2 ;; esac
+[ "${#canary}" -ge 24 ] || { echo "residue-check: canary must be at least 24 characters" >&2; exit 2; }
+# No real secret belongs here. A synthetic marker is passed to grep as a fixed pattern.
+verify_host_protection() {
+  KASTEN_DM_NAME=kasten
+  # shellcheck source=deploy/host/host.env
+  [ ! -r /etc/kasten/host.env ] || . /etc/kasten/host.env
+  mountpoint -q /var/lib/kasten || { echo "residue-check: encrypted volume is not mounted" >&2; return 2; }
+  [ "$(findmnt -n -o SOURCE --mountpoint /var/lib/kasten)" = "/dev/mapper/$KASTEN_DM_NAME" ] || {
+    echo "residue-check: wrong source at encrypted mount" >&2; return 2;
+  }
+  cryptsetup status "$KASTEN_DM_NAME" | grep -Eq 'type:[[:space:]]*LUKS' || {
+    echo "residue-check: mount is not an active LUKS mapper" >&2; return 2;
+  }
+  awk 'NR > 1 && $1 !~ /^\/dev\/zram/ { bad = 1 } END { exit bad }' /proc/swaps || {
+    echo "residue-check: disk swap is active" >&2; return 2;
+  }
+}
+if [ "$#" -eq 0 ]; then
+  [ "$(id -u)" -eq 0 ] || { echo "residue-check: run the host scan as root" >&2; exit 2; }
+  # Every disk file system: the root, and each mounted ext4, xfs, btrfs or vfat file system. On
+  # Fedora's btrfs layout /home (Podman's images), /var and /boot are separate mounts, which the
+  # root's scan does not cross. The encrypted volume is excluded below. Directories only: in a
+  # container, as in the local test, single files such as /etc/hosts are mounts too.
+  roots=$({ echo /; findmnt -rn -o TARGET -t ext4,xfs,btrfs,vfat; } | awk '!seen[$0]++' |
+    while IFS= read -r m; do if [ -d "$m" ]; then printf '%s\n' "$m"; fi; done)
+  set -f
+  # shellcheck disable=SC2086 # one mount point per line; globbing is off
+  set -- $roots
+  set +f
+fi
+first=true
+protected=false
+for root do
+  [ -d "$root" ] || { echo "residue-check: scan root is not a directory" >&2; exit 2; }
+  root=$(cd "$root" && pwd -P)
+  if $first; then set --; first=false; fi
+  set -- "$@" "$root"
+  case $root in
+    / | /var | /var/lib | /var/lib/kasten | /var/lib/kasten/*)
+      if ! $protected; then verify_host_protection; protected=true; fi
+      ;;
+  esac
+done
+work=$(mktemp -d "${TMPDIR:-/tmp}/kasten-residue.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+export KASTEN_RESIDUE_PATTERN="$canary"
+# Every explicitly named root is scanned without crossing another mount. Exclude only this
+# task's control file, the ciphertext volume file, and the encrypted mount itself. Root-scan
+# errors fail visibly; unreadable paths cannot be counted as clean.
+if ! find "$@" -xdev \( -path /var/lib/kasten -o -path /var/lib/kasten.luks -o -path "$work" \) -prune -o \
+  -type f ! -samefile "$canary_file" -exec sh -c '
+    for path do
+      rc=0
+      LC_ALL=C grep -aqF -- "$KASTEN_RESIDUE_PATTERN" "$path" 2>/dev/null || rc=$?
+      case $rc in
+        0) printf "match\n" ;;
+        1) ;;
+        *) echo "residue-check: a file could not be scanned" >&2; exit 2 ;;
+      esac
+    done
+  ' sh {} + >"$work/matches"; then
+  echo "residue-check: scan failed; no clean result" >&2
+  exit 2
+fi
+matches=$(wc -l <"$work/matches" | tr -d ' ')
+printf 'unencrypted canary matches: %s\n' "$matches"
+[ "$matches" -eq 0 ] || exit 1

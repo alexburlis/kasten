@@ -1,0 +1,21 @@
+# Nightly restic backup inside the running mail container (kasten-server backup).
+# /var/lib/kasten/secrets/backup.env is root-only and sets RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE
+# and KASTEN_BACKUP_ENV_FILE, which kasten-mail-exec passes into the container. The two files it
+# names are in the data volume's secrets directory, readable only by root and the container's
+# kasten user. KASTEN_PUSH_URL is optional: after a successful backup, kasten-push calls it for a
+# Kuma push monitor.
+[Unit]
+Description=Kasten: nightly backup
+Requisite=kasten.service
+After=kasten.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/var/lib/kasten/secrets/backup.env
+# Rootless Podman moves itself out of this unit's cgroup, and journald then files the
+# container's output under user@2600.service, so "journalctl -u" misses it. Read it with
+# "journalctl -t kasten-backup": the lines keep this identifier.
+SyslogIdentifier=kasten-backup
+ExecStart=/usr/local/sbin/kasten-mail-exec backup
+ExecStartPost=/usr/local/sbin/kasten-push
+TimeoutStartSec=6h

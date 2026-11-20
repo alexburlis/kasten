@@ -1,0 +1,11 @@
+{
+  "ignorePatterns": [
+    "bench/**",
+    ".kasten-dev/**",
+    "**/.vitest/**",
+    "**/dist/**",
+    "tools/oxlint/anti-slop/**",
+    "pnpm-lock.yaml",
+    "LICENSE"
+  ]
+}

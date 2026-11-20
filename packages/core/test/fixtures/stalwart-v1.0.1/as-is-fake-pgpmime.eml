@@ -1,0 +1,18 @@
+From: Bank Test <alerts@bank.test>
+To: you@kasten.test
+Subject: KNC-SKIP-fakepgpmime fake multipart/encrypted
+Date: Fri, 30 Oct 2026 13:33:07 -0000
+Message-ID: <179336718729.54822.16138256292992045009@bank.test>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="b1"
+
+--b1
+Content-Type: application/pgp-encrypted
+
+Version: 1
+
+--b1
+Content-Type: text/plain; charset=utf-8
+
+KNC-SKIP-fakepgpmime code 333-111 (plaintext)
+--b1--

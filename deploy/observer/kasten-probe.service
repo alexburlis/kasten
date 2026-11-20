@@ -1,0 +1,10 @@
+[Unit]
+Description=Kasten: off-host delivery probe
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/kasten-observer
+ExecStart=/usr/bin/docker compose run --rm -T probe
+TimeoutStartSec=20min

@@ -1,0 +1,53 @@
+#!/bin/sh
+# kasten-mail-service: start or stop the mail server's container, kasten-mail. kasten.service runs
+# it. Do not run it by hand: "systemctl start kasten.service" first checks that the volume is
+# unlocked and that the first boot is done.
+#
+#   kasten-mail-service start   start kasten-mail
+#   kasten-mail-service wait    wait until kasten-mail is healthy, up to 240 s
+#   kasten-mail-service stop    stop kasten-mail (up to 60 s), log its exit status, remove it
+#
+# Rootless Podman moves itself out of kasten.service's cgroup, so stopping the unit does not end a
+# "podman run" that is still starting the container. "start" therefore becomes that podman process
+# (exec): systemd then signals it by its process id and waits for it to exit before ExecStopPost=
+# runs "stop", which removes whatever it created.
+set -eu
+
+# shellcheck source=deploy/host/podman.sh
+. /usr/local/lib/kasten/podman.sh
+
+say() { printf 'kasten-mail-service: %s\n' "$*" >&2; }
+
+start() {
+  kasten_images
+  # --replace removes a container that a killed start left behind. Podman's restart policy starts
+  # the server again after a crash; a stop through Podman, as below, is final.
+  # shellcheck disable=SC2086 # MAIL_ARGS is a list of words without spaces
+  exec kasten-podman run --detach --replace --name kasten-mail --restart=on-failure --stop-timeout=60 \
+    --network=host --env-file="$KASTEN_ENV_FILE" $MAIL_ARGS "$SERVER_IMAGE" >/dev/null
+}
+
+wait_mail() {
+  if ! wait_healthy kasten-mail 240; then
+    say "kasten-mail did not become healthy; its log: journalctl CONTAINER_NAME=kasten-mail"
+    exit 1
+  fi
+}
+
+stop() {
+  if kasten-podman container exists kasten-mail; then
+    kasten-podman stop --time=60 kasten-mail >/dev/null || true
+    say "kasten-mail stopped: $(kasten-podman inspect --format 'exit status {{.State.ExitCode}}' kasten-mail || true)"
+  fi
+  kasten-podman rm --force --ignore --time=60 kasten-mail >/dev/null
+}
+
+case ${1:-} in
+  start) start ;;
+  wait) wait_mail ;;
+  stop) stop ;;
+  *)
+    say "usage: kasten-mail-service start|wait|stop"
+    exit 2
+    ;;
+esac

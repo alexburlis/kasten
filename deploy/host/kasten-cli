@@ -1,0 +1,35 @@
+#!/bin/sh
+# kasten-cli: run the kasten CLI once, in a new, temporary container.
+#
+#   kasten-cli setup --config /etc/kasten/kasten.json
+#   kasten-cli help
+#
+# The container sees /var/lib/kasten/cli read-only as /etc/kasten (kasten.json and the files it
+# names) and its state directory writable as /etc/kasten/state: pinned keys, the reader credential
+# and the incremental check state, the only place the CLI writes. On the host network it reaches
+# the admin API on 127.0.0.1:8080, and Kuma over HTTPS.
+set -eu
+
+# shellcheck source=deploy/host/podman.sh
+. /usr/local/lib/kasten/podman.sh
+
+CLI_DIR=/var/lib/kasten/cli
+
+# 2, as the CLI's own errors.
+die() {
+  printf 'kasten-cli: %s\n' "$*" >&2
+  exit 2
+}
+
+mountpoint -q /var/lib/kasten || die "the encrypted volume is not mounted"
+[ -d "$CLI_DIR/state" ] || die "$CLI_DIR/state is missing; install.sh creates it"
+# Container root is the kasten user on the host, so it reads only what kasten owns, and the
+# credentials stay private to that user.
+if [ -n "$(find "$CLI_DIR" \( ! -user kasten -o ! -group kasten -o ! -type l -perm /077 \) -print)" ]; then
+  die "every file in $CLI_DIR must belong to kasten:kasten, without group or other access. Run: chown -R kasten:kasten $CLI_DIR && chmod -R go= $CLI_DIR"
+fi
+kasten_images
+tty_arg
+# shellcheck disable=SC2086 # the argument lists are words without spaces
+exec kasten-podman run --rm --interactive $TTY --network=host $CLI_ARGS \
+  --volume="$CLI_DIR:/etc/kasten:ro,Z" --volume="$CLI_DIR/state:/etc/kasten/state:Z" "$CLI_IMAGE" "$@"

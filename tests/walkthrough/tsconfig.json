@@ -1,0 +1,16 @@
+{
+  "//": "The walkthrough uses the web package's Playwright and zod. TypeScript takes the first existing path (the package, for its types); Playwright's loader takes the last (the ESM entry, so named imports work). If Playwright ever picks the package instead, loading fails loudly with a named-export error.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "paths": {
+      "@playwright/test": [
+        "../../web/node_modules/@playwright/test",
+        "../../web/node_modules/@playwright/test/index.mjs"
+      ],
+      "zod": ["../../web/node_modules/zod", "../../web/node_modules/zod/index.js"]
+    }
+  },
+  "include": ["*.ts"]
+}

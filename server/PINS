@@ -1,0 +1,12 @@
+# Pinned upstream artifacts for the kasten-server image.
+# The Dockerfile reads this file: change a pin here, and nowhere else, except the base image
+# digest, which must also be set in the Dockerfile's FROM lines (a check compares them).
+# Every SHA-256 below was read from the GitHub release asset digest on 2026-11-03.
+#
+# name        version      arch   sha256                                                            source
+stalwart      1.0.1        amd64  aabae69bcdeff31e305d60f3ecb059fdb203116c0077d81560bf6d6f0f757d75  https://github.com/stalwartlabs/stalwart/releases/download/v1.0.1/stalwart-x86_64-unknown-linux-gnu.tar.gz
+stalwart      1.0.1        arm64  36612d5c4e7c11b23a87b205c9341be08eb49c71515d4720854e1864b7e4c5b5  https://github.com/stalwartlabs/stalwart/releases/download/v1.0.1/stalwart-aarch64-unknown-linux-gnu.tar.gz
+restic        0.19.1       amd64  f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c  https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_amd64.bz2
+restic        0.19.1       arm64  a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465  https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_arm64.bz2
+spam-rules    3.0.3        all    43124c2ecfb9c5f187c1b9415ae7d37be1318ce0be91132750962a77c5f62505  https://github.com/stalwartlabs/spam-filter/releases/download/v3.0.3/spam-filter-rules.json.gz
+debian        trixie-slim  all    f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4  docker.io/library/debian:trixie-slim

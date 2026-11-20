@@ -1,0 +1,116 @@
+{
+  "//": "Example kasten.json for a production server. Copy it to kasten.json (git-ignored) and change every value. It holds no secrets: each secret is in its own file with mode 0600. Relative paths are relative to this file, so keep kasten.json and its secret files together in one private directory (mode 0700). Keys that start with // are comments. Field reference: cli/README.md.",
+
+  "//serverHostname": "The MX host. Other mail servers connect to it on port 25, and Stalwart greets them with this name.",
+  "serverHostname": "mx.example.com",
+
+  "//mailApiHostname": "The mail API host: JMAP and sign-in on port 443. Stalwart gets its certificate for this name and serverHostname.",
+  "mailApiHostname": "mail.example.com",
+
+  "//domains": "The mail domains. catchAll receives mail for unknown local addresses; null turns it off.",
+  "domains": [{ "name": "example.com", "catchAll": "you@example.com" }],
+
+  "//users": "Accounts that setup creates if they are missing. passwordFile is needed only to create the account. Every account listed before the first boot needs one; null is only for an account you add later with kasten user add. aliases are extra addresses of the account, usable as send-as identities. probe@example.com is the delivery probe account that probe names.",
+  "users": [
+    {
+      "email": "you@example.com",
+      "description": "You",
+      "aliases": ["hello@example.com"],
+      "passwordFile": "you-password"
+    },
+    {
+      "email": "probe@example.com",
+      "description": "Delivery probe (kasten probe)",
+      "aliases": [],
+      "passwordFile": "probe-password"
+    }
+  ],
+
+  "//webApp": "The web app's origin (scheme, host, optional port; https in production), its OAuth redirect path, and the OAuth client id it uses. CORS allows exactly this origin.",
+  "webApp": {
+    "origin": "https://app.example.com",
+    "redirectPath": "/oauth/callback",
+    "oauthClientId": "kasten-web"
+  },
+
+  "//http": "production: public HTTPS on publicBind with an ACME TLS-ALPN-01 certificate, and the admin API on adminBind, a plain-HTTP listener on the VPS's loopback address. The CLI reaches it from the VPS itself (the compose service cli) or through an SSH tunnel. dev: {\"mode\": \"dev\", \"bind\": \"0.0.0.0:8080\"}, one plain-HTTP listener.",
+  "http": {
+    "mode": "production",
+    "publicBind": "[::]:443",
+    "adminBind": "127.0.0.1:8080",
+    "acme": {
+      "directory": "https://acme-v02.api.letsencrypt.org/directory",
+      "contact": ["postmaster@example.com"]
+    }
+  },
+
+  "//smtpBind": "Inbound SMTP. In production it offers STARTTLS with the ACME certificate.",
+  "smtpBind": "[::]:25",
+
+  "//imapImportBind": "IMAP for import-imap only, with plain-text login; keep it private. null turns IMAP off.",
+  "imapImportBind": null,
+
+  "//relays": "One entry for each configured sender domain, with its own identity-scoped SES credential files. Amazon SES SMTP: port 587, STARTTLS required, certificate verified. The username is the IAM access key id; the password comes from kasten aws smtp-password.",
+  "relays": [
+    {
+      "domain": "example.com",
+      "host": "email-smtp.eu-central-1.amazonaws.com",
+      "port": 587,
+      "usernameFile": "ses-smtp-username",
+      "passwordFile": "ses-smtp-password"
+    }
+  ],
+
+  "//operatorPublicKeyFile": "The operator's armored OpenPGP public key. The web app adds it to the account's key bundle.",
+  "operatorPublicKeyFile": "operator.pub.asc",
+
+  "//admin": "How kasten reaches Stalwart's admin API. apiUrl is the admin listener as the CLI reaches it: from the VPS itself (the compose service cli), or through an SSH tunnel to that port. bootstrap writes apiKeyFile. account is the key-only admin account. allowedIps are the source addresses Stalwart sees for admin calls.",
+  "admin": {
+    "apiUrl": "http://127.0.0.1:8080",
+    "apiKeyFile": "admin-api-key",
+    "account": "kasten-admin",
+    "allowedIps": ["127.0.0.1/32", "::1/128"]
+  },
+
+  "//limits": "Optional; these are the defaults. inboundMessageBytes is the SMTP size limit (40 MiB). sendMessageBytes is the JMAP send limit (38 MB, under SES's 40 MB); setup lets one upload be 1.4 times that, for the encrypted Sent copy. outboundRecipientsPerDay caps external recipients per UTC day across all senders.",
+  "limits": {
+    "inboundMessageBytes": 41943040,
+    "sendMessageBytes": 38000000,
+    "uploadTtlSeconds": 300,
+    "maxBufferedMemoryBytes": 268435456,
+    "outboundRecipientsPerDay": 100,
+    "senderToRecipientPerHour": 100
+  },
+
+  "//dnsResolver": "Optional. The local Unbound resolver in the kasten-server image.",
+  "dnsResolver": { "address": "127.0.0.1", "port": 5335 },
+
+  "//spamRulesUrl": "Optional. The pinned spam rules inside the kasten-server image. Must be file:///: Kasten never downloads at runtime.",
+  "spamRulesUrl": "file:///var/lib/kasten/stalwart/spam-filter-rules.json.gz",
+
+  "//kumaPushUrlFile": "Optional. A file holding the Uptime Kuma push URL for kasten check. null turns the push off.",
+  "kumaPushUrlFile": null,
+
+  "//checkExceptionsFile": "Optional. The reviewed exceptions kasten check reads when --exceptions names no file, such as on the daily timer: {\"you@example.com\": [\"<email id>\"]}. Each id excuses only that one message; a Sent copy from after the account's first kasten lock stays a finding. null lists none.",
+  "checkExceptionsFile": null,
+
+  "//probe": "The delivery probe account, one of users. kasten probe sends one message a day from it to itself, out through the relay and back in through the MX. kasten lock and kasten security-check sign in as it, so they need this section too. kumaPushUrlFile is the probe's own Uptime Kuma push URL file; null turns its push off.",
+  "probe": {
+    "account": "probe@example.com",
+    "passwordFile": "probe-password",
+    "kumaPushUrlFile": null
+  },
+
+  "//dns": "Input for kasten dns. ipv4 and ipv6 are the VPS addresses. sesDkimTokens maps a domain to its three SES DKIM tokens; without them kasten dns prints placeholders. customMailFrom is an optional SES MAIL FROM subdomain label. tlsRptAddress adds an optional TLS-RPT record.",
+  "dns": {
+    "ipv4": "203.0.113.10",
+    "ipv6": "2001:db8::10",
+    "sesRegion": "eu-central-1",
+    "dmarcPolicy": "quarantine",
+    "dmarcReportAddress": null,
+    "sesDkimTokens": {},
+    "customMailFrom": null,
+    "tlsRptAddress": null,
+    "ttl": 3600
+  }
+}

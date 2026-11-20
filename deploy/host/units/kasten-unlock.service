@@ -1,0 +1,31 @@
+# Unlocks /var/lib/kasten.luks through Clevis and Tang, then mounts it at /var/lib/kasten.
+# If Tang does not answer within KASTEN_UNLOCK_TIMEOUT (/etc/kasten/host.env), the unit fails,
+# nothing is mounted, and systemd tries again a minute later, until Tang answers. The unlock then
+# starts kasten.service. Exit status 6 means a retry cannot help: no volume file, no Tang binding,
+# or another file system on /var/lib/kasten. An unlock whose mount fails locks the disk again,
+# because systemd runs ExecStop only after a start that succeeded. A stop locks the disk and ends
+# the retries.
+# Recovery without Tang: kasten-unlock-passphrase.
+[Unit]
+Description=Kasten: unlock and mount the encrypted mail volume
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/kasten-unlock start
+# kasten.service's own start failed with this unit's failure, and a restart does not repeat it.
+# --no-block: kasten.service waits for this unit (After=). A failed start must not unmount the
+# volume again, so its error only goes to the journal; the mail monitors see mail stay down.
+ExecStartPost=-/usr/bin/systemctl --no-block start kasten.service
+ExecStop=/usr/local/sbin/kasten-unlock stop
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=6
+SyslogIdentifier=kasten-unlock
+TimeoutStartSec=15min
+TimeoutStopSec=2min
+
+[Install]
+WantedBy=multi-user.target

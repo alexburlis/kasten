@@ -1,0 +1,69 @@
+#!/bin/sh
+# kasten-unlock-passphrase: unlock the Kasten volume with the recovery passphrase, mount it and
+# start Kasten. Use it when Tang cannot unlock the volume, for example while the Tang host is down.
+#
+#   kasten-unlock-passphrase           asks for the passphrase on the terminal
+#   kasten-unlock-passphrase < FILE    reads the passphrase from the first line of standard input
+#
+# Until the first boot (kasten-bootstrap) is done, it only unlocks and mounts the volume, and
+# prints the next step: starting Stalwart then would be its first normal start, with a network.
+#
+# The passphrase never appears in arguments, the environment or logs: cryptsetup reads it itself.
+set -eu
+
+KASTEN_DM_NAME=kasten
+# shellcheck source=deploy/host/host.env
+[ ! -r /etc/kasten/host.env ] || . /etc/kasten/host.env
+DM=$KASTEN_DM_NAME
+HELPER=$(dirname "$0")/kasten-unlock
+# kasten-server init writes the volume marker. Stalwart creates its database at its first start,
+# in recovery mode under kasten-bootstrap, or a restore brings it. kasten-bootstrap keeps the
+# third file while a first boot has not finished. kasten.service checks the same two paths.
+MARKER=/var/lib/kasten/data/.kasten-volume
+DATABASE=/var/lib/kasten/data/stalwart/stalwart.sqlite
+UNFINISHED=/var/lib/kasten/.kasten-bootstrap-incomplete
+
+say() { printf 'kasten-unlock-passphrase: %s\n' "$*" >&2; }
+
+if [ "$(id -u)" -ne 0 ]; then
+  say "run as root"
+  exit 2
+fi
+
+opened=no
+if ! cryptsetup status "$DM" >/dev/null 2>&1; then
+  dev=$("$HELPER" attach)
+  # On a terminal cryptsetup prompts, up to three times; otherwise it reads one line from stdin.
+  if ! cryptsetup open "$dev" "$DM"; then
+    logger -t kasten-unlock -p daemon.err -- "event=unlock result=failed method=passphrase device=$dev" || true
+    exit 1
+  fi
+  opened=yes
+  logger -t kasten-unlock -p daemon.notice -- "event=unlock result=ok method=passphrase device=$dev" || true
+fi
+
+# A failed start mounts nothing. Lock what this command unlocked: this start runs outside
+# kasten-unlock.service, so no stop of that unit locks it. A volume that was open before stays open.
+KASTEN_UNLOCK_METHOD=passphrase "$HELPER" start || {
+  status=$?
+  if [ "$opened" = yes ]; then
+    cryptsetup close "$DM"
+    logger -t kasten-unlock -p daemon.notice -- "event=lock result=ok reason=mount" || true
+    say "the volume did not mount, so it is locked again"
+  fi
+  exit "$status"
+}
+
+if [ ! -f "$MARKER" ]; then
+  say "the volume is mounted. Kasten was not started, because the volume is not initialised yet."
+  say "Next: kasten-mail-run init, then kasten-bootstrap"
+  exit 0
+fi
+if [ ! -f "$DATABASE" ] || [ -e "$UNFINISHED" ]; then
+  say "the volume is mounted. Kasten was not started, because the first boot is not done yet."
+  say "Next: kasten-bootstrap. On a new host that replaces an old one, restore the backup instead."
+  exit 0
+fi
+
+systemctl start kasten.service
+say "the volume is mounted and kasten.service is running"

@@ -1,0 +1,46 @@
+#!/bin/bash
+# Test only: JMAP as you@kasten.test, on Stalwart's HTTP listener at 127.0.0.1:8080 inside the
+# test VPS, with the password from /var/lib/kasten/cli/you-password. run.sh installs it as
+# /usr/local/bin/kasten-test-jmap.
+#
+#   kasten-test-jmap count                  prints how many emails the account holds
+#   kasten-test-jmap plant-sent < message   imports the message into Sent as plaintext and prints
+#                                           its email id: with $draft, Stalwart stores it without
+#                                           encrypting, and then $draft is removed
+set -euo pipefail
+
+API=http://127.0.0.1:8080
+LOGIN=/run/kasten-test-jmap.curl
+umask 077
+trap 'rm -f "$LOGIN"' EXIT
+# curl reads the login from a file, so the password never appears in a process list.
+printf 'user = "you@kasten.test:%s"\n' "$(cat /var/lib/kasten/cli/you-password)" >"$LOGIN"
+account=$(curl -fsS -K "$LOGIN" "$API/jmap/session" | jq -er '.primaryAccounts["urn:ietf:params:jmap:mail"]')
+
+# call <method> <arguments JSON>: prints the method's response arguments; fails on a JMAP error.
+call() {
+  jq -nc --arg m "$1" --arg a "$account" --argjson args "$2" \
+    '{using: ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"], methodCalls: [[$m, ($args + {accountId: $a}), "c"]]}' |
+    curl -fsS -K "$LOGIN" -H 'Content-Type: application/json' --data-binary @- "$API/jmap/" |
+    jq -ec '.methodResponses[0] | if .[0] == "error" then error(tostring) else .[1] end'
+}
+
+case ${1:-} in
+  count)
+    call Email/query '{}' | jq -er '.ids | length'
+    ;;
+  plant-sent)
+    blob=$(curl -fsS -K "$LOGIN" -H 'Content-Type: message/rfc822' --data-binary @- "$API/jmap/upload/$account/" | jq -er .blobId)
+    sent=$(call Mailbox/get '{"ids": null, "properties": ["id", "role"]}' | jq -er '.list[] | select(.role == "sent") | .id')
+    id=$(call Email/import "$(jq -nc --arg b "$blob" --arg s "$sent" \
+      '{emails: {e: {blobId: $b, mailboxIds: {($s): true}, keywords: {"$draft": true, "$seen": true}}}}')" |
+      jq -er '.created.e.id')
+    call Email/set "$(jq -nc --arg i "$id" '{update: {($i): {"keywords/$draft": null}}}')" |
+      jq -e --arg i "$id" '.updated | has($i)' >/dev/null
+    printf '%s\n' "$id"
+    ;;
+  *)
+    echo "usage: kasten-test-jmap count | plant-sent < message" >&2
+    exit 2
+    ;;
+esac
